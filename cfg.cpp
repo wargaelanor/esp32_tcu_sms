@@ -72,7 +72,7 @@ else if (k == "ap_ssid")         g_cfg.ap_ssid = v;
   }
   f.close();
   g_cfg.loaded = true;
-  cfg_ensure_generated_jar();   // первый старт: сгенерировать свои device_id + key как в JAR
+  cfg_ensure_generated_jar();   // first start: generate own device_id + key just like the JAR
 }
 
 bool cfg_save() {

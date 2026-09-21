@@ -16,7 +16,7 @@ void WsLinkClient::begin(Link* link, const String& host, const String& path) {
 
 void WsLinkClient::stop() {
   closeLink(true);
-  _nextConnect = millis() + 0xFFFFFF;   // не реконнектиться до begin()
+  _nextConnect = millis() + 0xFFFFFF;   // don't reconnect until begin()
 }
 
 bool WsLinkClient::connected() { return _open; }
@@ -35,7 +35,7 @@ int WsLinkClient::readSome(uint8_t* out, size_t max, uint32_t timeoutMs) {
   return -1;
 }
 
-// Гарантируем presence байт и подкачиваем с линка, компактно сдвигая остаток.
+// Guarantee presence of bytes and top up from the link, compactly shifting the remainder.
 bool WsLinkClient::ensureBytes(size_t need, uint32_t timeoutMs) {
   uint32_t t0 = millis();
   for (;;) {
@@ -43,7 +43,7 @@ bool WsLinkClient::ensureBytes(size_t need, uint32_t timeoutMs) {
     else if (_rxpos > 0 && _rxlen - _rxpos >= need) return true;
     else if (_rxlen - _rxpos >= need) return true;
 
-    if (_rxpos > 0) {                        // сдвигаем остаток в начало
+    if (_rxpos > 0) {                        // shift remainder to the front
       memmove(_rxbuf, _rxbuf + _rxpos, _rxlen - _rxpos);
       _rxlen -= _rxpos; _rxpos = 0;
     }
@@ -61,7 +61,7 @@ bool WsLinkClient::readLine(String& line, uint32_t timeoutMs) {
   line = "";
   uint32_t t0 = millis();
   while (millis() - t0 < timeoutMs) {
-    if (!ensureBytes(1, 200)) continue;      // ждать до общего timeoutMs, не сдаваться через 200мс
+    if (!ensureBytes(1, 200)) continue;      // wait up to the overall timeoutMs, don't give up after 200ms
     char c = (char)_rxbuf[_rxpos++];
     if (c == '\n') return true;
     if (c != '\r') line += c;
@@ -139,7 +139,7 @@ bool WsLinkClient::sendFrame(uint8_t opcode, const uint8_t* d, size_t n) {
   if (n == 0) return _link->write(hdr, h) == h;
 
   static uint8_t tmp[9100];
-  size_t first = (h + n <= sizeof(tmp)) ? n : (sizeof(tmp) - h);   // весь кадр одним TLS-record
+  size_t first = (h + n <= sizeof(tmp)) ? n : (sizeof(tmp) - h);   // whole frame in one TLS record
   memcpy(tmp, hdr, h);
   memcpy(tmp + h, d, first);
   wsMask(tmp + h, first, key);
@@ -218,11 +218,11 @@ int WsLinkClient::processFrames() {
     static uint8_t frag[9100];
 
     switch (opcode) {
-      case 0x0:   // continuation: доклеиваем к нефинальному кадру
+      case 0x0:   // continuation: append to the non-final frame
         if (_fragActive && _fragLen + len <= sizeof(frag)) {
           memcpy(frag + _fragLen, payload, len);
           _fragLen += len;
-          if (b0 & 0x80) {                         // FIN -> отдать как целое
+          if (b0 & 0x80) {                         // FIN -> deliver as a whole
             if (_fragOp == 0x2 && onBin) onBin(frag, _fragLen);
             else if (_fragOp == 0x1 && onText) onText((const char*)frag, _fragLen);
             _fragActive = false;

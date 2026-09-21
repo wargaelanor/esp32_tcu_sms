@@ -1,12 +1,12 @@
-// ESP32-C3 + SIM800: WebSocket relay client (JAR-замена) + GPRS/WiFi + SMS-реле бинарных PDU
-// Протокол сервера OpenCARWINGS (api/consumers.py):
+// ESP32-C3 + SIM800: WebSocket relay client (JAR replacement) + GPRS/WiFi + binary PDU SMS relay
+// OpenCARWINGS server protocol (api/consumers.py):
 //   ws://host/ws/smsgateway/?device_id=<id>
 //   server -> client: binary (nonce16 || AES-CBC(JSON)), JSON: {"type":"pdu","pdu":hex,"data":hex,"length":N,"phone":...}
-//   client -> server: text "ping" -> ответ "pong"
-// Сборка: Arduino IDE 2.x, board "ESP32C3 Dev Module", ядро esp32 2.0.x. Без сторонних библиотек.
+//   client -> server: text "ping" -> reply "pong"
+// Build: Arduino IDE 2.x, board "ESP32C3 Dev Module", core esp32 2.0.x. No third-party libraries.
 #include <Arduino.h>
 #include <WiFi.h>
-// Serial = HWCDC (native USB) при ARDUINO_USB_MODE=1 + CDC_ON_BOOT=1 (см. platformio.ini)
+// Serial = HWCDC (native USB) with ARDUINO_USB_MODE=1 + CDC_ON_BOOT=1 (see platformio.ini)
 
 #include "cfg.h"
 #include "boards.h"
@@ -19,11 +19,11 @@
 #include "minijson.h"
 #include "webui.h"
 
-// ------------------------------- аппаратные пины -------------------------------
-// Выбираются boards.h в зависимости от целевой платы (по умолчанию ESP32-C3 + SIM800,
+// ------------------------------- hardware pins -------------------------------
+// Selected in boards.h depending on the target board (default ESP32-C3 + SIM800,
 // BOARD_T_CALL -> TTGO T-Call v1.3/1.4).
 
-// ------------------------------- глобальное состояние -------------------------------
+// ------------------------------- global state -------------------------------
 static uint8_t g_key[32];
 static size_t  g_keyLen = 0;
 
@@ -33,13 +33,13 @@ static bool ws_secure = false;
 
 static WsClient g_ws;
 
-// GPRS-маршрут: SIM800 transparent TCP -> TLS -> WebSocket (WSS).
+// GPRS path: SIM800 transparent TCP -> TLS -> WebSocket (WSS).
 static GprsLink     g_gprsLink;
 static TlsLink      g_tlsLink(&g_gprsLink);
 static WsLinkClient g_wsLinkClient;
 
-static bool   ws_armed = false;      // разрешено держать соединение
-static bool   ws_started = false;    // соединение стоИт
+static bool   ws_armed = false;      // connection allowed to stay up
+  static bool   ws_started = false;    // connection is up
 static uint32_t wsNextTry = 0;
 static const uint32_t WS_RETRY_MS = 8000;
 
@@ -126,7 +126,7 @@ static void wifi_tick() {
   wl_status_t st = WiFi.status();
   if (st == WL_CONNECTED) {
     staFailSince = 0;
-    startApIfEnabled();   // AP доступен для перенастройки (если ap_enable)
+    startApIfEnabled();   // AP available for reconfiguration (if ap_enable)
     return;
   }
   if (staFailSince == 0) staFailSince = millis();
@@ -218,7 +218,7 @@ static void onParcelText(const String& jsonRaw) {
       if (ok) g_stats.smsOk++; else g_stats.smsFail++;
     }
   } else if (type == "sms") {
-    Serial.println("[ws] sms(plain) not supported, skip");   // текстовый маршрут не используем
+    Serial.println("[ws] sms(plain) not supported, skip");   // plain-text route is not used
   } else if (type == "connect") {
     Serial.println("[ws] server: connect");
   } else {
@@ -288,7 +288,7 @@ void ws_setup() {
 void ws_tick() {
   if (!ws_armed) {
     g_ws.tick();
-    g_wsLinkClient.stop();        // не ретраить и не держать модем при отключении
+    g_wsLinkClient.stop();        // don't retry or keep the modem alive while disabled
     return;
   }
   bool gprs = (g_cfg.net_mode == "gprs");
@@ -329,7 +329,7 @@ void ws_tick() {
 
   g_ws.tick();
   if (!g_ws.connected()) {
-    // библиотека переподключается сама; ждём события CONNECTED
+    // library reconnects on its own; wait for CONNECTED event
     return;
   }
 
@@ -349,14 +349,14 @@ void ws_tick() {
 }
 
 // ------------------------------- PDU -> SMS -------------------------------
-// SIM800: AT+CMGS=tpduLen, тело — ВЕСЬ PDU вместе с SCA-октетом (ведущий 00 =
-// "SMSC из SIM"). Без ведущего 00 модем зависает в ожидании SCA-октета.
+// SIM800: AT+CMGS=tpduLen, body — the ENTIRE PDU including the SCA octet (leading 00 =
+// "SMSC from SIM"). Without the leading 00 the modem hangs waiting for an SCA octet.
 static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
   if (cmgsLen <= 0 || !g_cfg.jar_device_id.length()) return false;
   String body = pduHex;
   int octets = body.length() / 2;
   if (octets == cmgsLen) {
-    body = "00" + body;   // сервер прислал TPDU без SCA -> добавить SCA `00`
+    body = "00" + body;   // server sent TPDU without SCA -> prepend SCA `00`
     octets++;
   }
   if (octets != cmgsLen + 1) {
@@ -365,10 +365,10 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
     return false;
   }
   bool usingGprs = (g_cfg.net_mode == "gprs") && g_sim.passthroughActive;
-  if (usingGprs) g_sim.backToAT();            // приостановить data-link для SMS
+  if (usingGprs) g_sim.backToAT();            // pause data link for SMS
   bool ok = g_sim.sendPdu(body.c_str(), cmgsLen);
   if (usingGprs) {
-    g_sim.closeTcp();                          // data-link закрыт -> WS переподнимется сам
+    g_sim.closeTcp();                          // data link closed -> WS will reconnect on its own
     ws_force_reconnect();
   }
   Serial.printf("[sms] sendPdu len=%d -> %s\n", cmgsLen, ok ? "OK" : "FAIL");
@@ -380,7 +380,7 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
 static uint32_t simPollAt = 0;
 static uint32_t simLastDiag = 0;
 void sim_tick() {
-  if (g_sim.passthroughActive) return;   // прозрачный режим: UART занят TLS-потоком
+  if (g_sim.passthroughActive) return;   // transparent mode: UART busy with TLS stream
   if (millis() < simPollAt) return;
   simPollAt = millis() + 15000;
 
@@ -493,7 +493,7 @@ static void gprsDiag() {
   Serial.printf("[gprs] diag apn='%s' user='%s' pass='%s'\n", g_cfg.apn.c_str(), g_cfg.apn_user.c_str(), g_cfg.apn_pass.c_str());
   g_sim.verbose = true;
   g_sim.rawCmd("AT", 2000);
-  g_sim.rawCmd("ATI", 2000);                    // версия прошивки модема
+  g_sim.rawCmd("ATI", 2000);                    // modem firmware version
   Serial.println("--- CIPMODE probe ---");
   g_sim.rawCmd("AT+CIPMODE?", 3000);
   g_sim.rawCmd("AT+CIPMODE=1", 5000);
@@ -506,29 +506,29 @@ static void gprsDiag() {
   g_sim.rawCmd(csttCmd.c_str(), 3000);
   Serial.println("[gprs] SAPBR=2,1 (query existing) ...");
   g_sim.rawCmd("AT+SAPBR=2,1", 3000);
-  Serial.println("[gprs] SAPBR=1,1 (open bearer if needed, до 60с) ...");
+  Serial.println("[gprs] SAPBR=1,1 (open bearer if needed, up to 60s) ...");
   g_sim.rawCmd("AT+SAPBR=1,1", 60000);
-  Serial.println("[gprs] CIICR (до 40с) ...");
+  Serial.println("[gprs] CIICR (attach, up to 40s) ...");
   g_sim.rawCmd("AT+CIICR", 40000);
   Serial.println("[gprs] SAPBR=2,1 (query) ...");
   g_sim.rawCmd("AT+SAPBR=2,1", 3000);
-  Serial.println("--- transparent TCP full flow (CIPMODE=1 предпочтителен) ---");
+  Serial.println("--- transparent TCP full flow (CIPMODE=1 preferred) ---");
   g_sim.rawCmd("AT+CGATT?", 3000);
   g_sim.rawCmd("AT+CGACT?", 3000);
-  // try transparent mode: CONNECT без OK (модем в data mode после уст. TCP)
+  // try transparent mode: CONNECT without OK (modem enters data mode after TCP established)
   Serial.println("[gprs] CIPSTART 104.21.1.89:443 (IP direct)...");
   String cip = g_sim.rawCmd("AT+CIPSTART=\"TCP\",\"104.21.1.89\",443", 30000);
-  Serial.printf("[gprs] CIPSTART result len=%d: %s\n", cip.length(), cip.length()?cip.c_str():"(пусто)");
+  Serial.printf("[gprs] CIPSTART result len=%d: %s\n", cip.length(), cip.length()?cip.c_str():"(empty)");
   Serial.println("[gprs] CIPSEND ...");
   g_sim.rawCmd("AT+CIPSEND", 6000);
-  Serial.println("[gprs] +++ (выход из data mode) + CIPSHUT ...");
+  Serial.println("[gprs] +++ (exit data mode) + CIPSHUT ...");
   g_sim.rawCmd("+++", 4000);
   g_sim.rawCmd("AT+CIPSHUT", 10000);
   g_sim.verbose = false;
   Serial.println("[gprs] done (see above)");
 }
 
-// --- CLI: посимвольный приём команд, накопление в буфер, обработка по '\n'.
+// --- CLI: char-by-char command read, buffer accumulation, handled on '\n'.
 static String cliBuf;
 void cli_tick() {
   while (Serial.available()) {
@@ -553,7 +553,7 @@ void cli_tick() {
             cfg_save();
             Serial.printf("[cfg] set %s='%s' saved\n", key.c_str(), val.c_str());
           } else {
-            Serial.println("[cfg] формат: s key=value");
+            Serial.println("[cfg] format: s key=value");
           }
         }
         else if (c == "g") {
@@ -610,7 +610,7 @@ void cli_tick() {
           ESP.restart();
         }
         else {
-          Serial.println("[cli] команды: l (список), s key=value, k (ID/ключ), w (WiFi), r (сброс)");
+          Serial.println("[cli] commands: l (list), s key=value, k (ID/key), w (WiFi), r (reset)");
         }
       }
     } else {
@@ -631,20 +631,20 @@ void setup() {
   Serial.print("[cfg] "); Serial.println(cfg_status());
   Serial.print("[dev] device_id="); Serial.println(g_cfg.jar_device_id);
   Serial.print("[dev] enc_key=");   Serial.println(g_cfg.jar_enc_key);
-  Serial.println("[dev] пропишите эти значения в настройках машины в OpenCARWINGS (sms_config)");
+  Serial.println("[dev] set these values in the car settings in OpenCARWINGS (sms_config)");
 
-  // AES ключ
+  // AES key
   g_keyLen = hex_key_parse(g_cfg.jar_enc_key, g_key, sizeof(g_key));
   if (g_keyLen != 16 && g_keyLen != 24 && g_keyLen != 32) {
     g_keyLen = 0;
-    Serial.println("[key] encryption key invalid/empty -> WS отключен");
+    Serial.println("[key] encryption key invalid/empty -> WS disabled");
   }
 
   // WS URL
   if (ws_parse_url(g_cfg.ws_url, ws_host, ws_port, ws_path, ws_secure)) {
     Serial.printf("[url] %s://%s:%d%s\n", ws_secure ? "wss" : "ws", ws_host.c_str(), ws_port, ws_path.c_str());
   } else {
-    Serial.println("[url] ws_url parse fail -> WS отключен");
+    Serial.println("[url] ws_url parse fail -> WS disabled");
   }
 
   g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN);

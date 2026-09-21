@@ -41,7 +41,7 @@ class Sim800 {
   bool await(const char* expect, uint32_t timeoutMs, String* response = nullptr);
   bool passthroughActive = false;
   bool verbose = false;              // rawCmd prints modem response to Serial
-  bool pdpClosed = false;            // closeTcp() снял PDP - нужен gprsUp перед следующей попыткой
+  bool pdpClosed = false;            // closeTcp() dropped the PDP - gprsUp is required before the next attempt
 
  private:
   HardwareSerial* _ser = nullptr;

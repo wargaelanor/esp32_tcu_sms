@@ -48,7 +48,7 @@ bool TlsLink::open() {
 
   mbedtls_ssl_conf_authmode(&_c->sc, MBEDTLS_SSL_VERIFY_NONE);   // no cert pinning for now
   mbedtls_ssl_conf_rng(&_c->sc, mbedtls_ctr_drbg_random, &_c->rng);
-  mbedtls_ssl_conf_read_timeout(&_c->sc, 3000);   // recvCb блокируется до 3с (GPRS RTT велик)
+  mbedtls_ssl_conf_read_timeout(&_c->sc, 3000);   // recvCb blocks up to 3s (GPRS RTT is high)
 
   mbedtls_ssl_conf_min_version(&_c->sc, MBEDTLS_SSL_MAJOR_VERSION_3, MBEDTLS_SSL_MINOR_VERSION_3);
 

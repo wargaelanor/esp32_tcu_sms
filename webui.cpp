@@ -7,7 +7,7 @@
 WebServer web(80);
 Stats g_stats;
 
-static const char PAGE_STATUS[] PROGMEM = R"HTML(<!DOCTYPE html><html lang=ru><meta charset=utf-8>
+static const char PAGE_STATUS[] PROGMEM = R"HTML(<!DOCTYPE html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>ESP32 TCU SMS</title>
 <style>body{font-family:monospace;max-width:640px;margin:12px auto;padding:0 8px;background:#111;color:#ddd}
@@ -16,14 +16,14 @@ td,th{border:1px solid #333;padding:4px 6px;text-align:left}
 .ok{color:#6f6}.bad{color:#f66}.warn{color:#fc6}
 button{background:#233;color:#fff;border:1px solid #466;padding:8px 12px;margin:4px;font-size:13px}
 button:active{background:#344}</style>
-<h1>ESP32 TCU SMS — статус</h1>
-<div id=s>Загрузка…</div>
+<h1>ESP32 TCU SMS — status</h1>
+<div id=s>Loading…</div>
 <p>
-<button onclick="fetch('/api/action?x=check')">Проверить интернет</button>
-<button onclick="if(confirm('Сгенерировать новые Device ID и ключ?'))fetch('/api/action?x=regen_keys')">Новый ID/ключ</button>
-<button onclick="fetch('/api/action?x=restart_ws')">Переподключить WS</button>
+<button onclick="fetch('/api/action?x=check')">Check internet</button>
+<button onclick="if(confirm('Generate a new Device ID and key?'))fetch('/api/action?x=regen_keys')">New ID/key</button>
+<button onclick="fetch('/api/action?x=restart_ws')">Reconnect WS</button>
 <button onclick="fetch('/api/action?x=reboot')">REBOOT</button>
-<a href=/setup><button>Настройка</button></a>
+<a href=/setup><button>Settings</button></a>
 </p>
 <script>
 function cls(v){var el=document.getElementById('s');el.innerHTML=v}
@@ -31,32 +31,32 @@ async function ref(){try{
  var r=await fetch('/api/status');var j=await r.json();
 var h='<table>';
   function row(k,v){return '<tr><td>'+k+'</td><td>'+v+'</td></tr>'}
-  h+=row('Прошивка', j.fw);
-  h+=row('Интернет через', j.net_mode);
-  if(j.wifi.sta && !j.internet.ok && j.net_mode==='wifi') h+=row('Подсказка','<span class=warn>Есть WiFi, нет интернета — проверь URL проверки</span>');
-  if(!j.wifi.sta && j.wifi.ap) h+=row('Подсказка','<span class=warn>WiFi не подключён: открой <a href=/setup><b>Настройка</b></a>, впиши SSID и пароль своей сети</span>');
- h+=row('WiFi STA', j.wifi.sta? '<span class=ok>'+j.wifi.ssid+'</span> ('+j.wifi.ip+', rssi '+j.wifi.rssi+')':'<span class=bad>нет</span>');
- h+=row('WiFi AP', j.wifi.ap? '<span class=ok>'+j.wifi.apssid+'</span> ('+j.wifi.apip+')':'нет');
- h+=row('SIM800', j.sim.ready? '<span class=ok>AT OK</span>, CSQ '+j.sim.csq+', CET '+((j.sim.reg)?'да':'нет'):'<span class=bad>нет ответа</span>');
+  h+=row('Firmware', j.fw);
+  h+=row('Internet via', j.net_mode);
+  if(j.wifi.sta && !j.internet.ok && j.net_mode==='wifi') h+=row('Hint','<span class=warn>WiFi is up but no internet — check the check URL</span>');
+  if(!j.wifi.sta && j.wifi.ap) h+=row('Hint','<span class=warn>WiFi not connected: open <a href=/setup><b>Settings</b></a>, enter your network SSID and password</span>');
+ h+=row('WiFi STA', j.wifi.sta? '<span class=ok>'+j.wifi.ssid+'</span> ('+j.wifi.ip+', rssi '+j.wifi.rssi+')':'<span class=bad>no</span>');
+ h+=row('WiFi AP', j.wifi.ap? '<span class=ok>'+j.wifi.apssid+'</span> ('+j.wifi.apip+')':'no');
+ h+=row('SIM800', j.sim.ready? '<span class=ok>AT OK</span>, CSQ '+j.sim.csq+', CET '+((j.sim.reg)?'yes':'no'):'<span class=bad>no answer</span>');
  h+=row('GPRS', j.gprs.up? '<span class=ok>'+j.gprs.ip+'</span>':'<span class=warn>down</span>');
- h+=row('Интернет (проверка)', j.internet.ok? '<span class=ok>OK</span> '+j.internet.info:'<span class=bad>FAIL</span> '+j.internet.info);
+ h+=row('Internet (check)', j.internet.ok? '<span class=ok>OK</span> '+j.internet.info:'<span class=bad>FAIL</span> '+j.internet.info);
 h+=row('WebSocket', j.ws.connected? '<span class=ok>connected</span>':'<span class=warn>'+j.ws.state+'</span>');
-  h+='<tr><td>WS переподключений</td><td>'+j.ws.reconnects+'</td></tr>';
+  h+='<tr><td>WS reconnects</td><td>'+j.ws.reconnects+'</td></tr>';
   h+=row('Device ID', j.jar.did);
   h+=row('Encryption key', j.jar.ekey);
-  h+=row('SMS отправлено', '<span class=ok>'+j.sms.ok+'</span> ок / <span class=bad>'+j.sms.fail+'</span> ошиб');
- h+=row('Последняя SMS', j.sms.last);
+  h+=row('SMS sent', '<span class=ok>'+j.sms.ok+'</span> ok / <span class=bad>'+j.sms.fail+'</span> fail');
+ h+=row('Last SMS', j.sms.last);
  h+='</table>';
  cls(h);
  setTimeout(ref, 2500);
-}catch(e){cls('ошибка связи с ESP32: '+e);setTimeout(ref,3000)}}
+}catch(e){cls('communication error with ESP32: '+e);setTimeout(ref,3000)}}
 ref();
 </script>
 </html>)HTML";
 
-static const char PAGE_SETUP[] PROGMEM = R"HTML(<!DOCTYPE html><html lang=ru><meta charset=utf-8>
+static const char PAGE_SETUP[] PROGMEM = R"HTML(<!DOCTYPE html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>ESP32 TCU SMS — настройка</title>
+<title>ESP32 TCU SMS — settings</title>
 <style>body{font-family:monospace;max-width:640px;margin:12px auto;background:#111;color:#ddd}
 h2{font-size:16px;border-top:1px solid #333;padding-top:8px}
 label{display:block;margin:6px 0 2px;font-size:12px;color:#9bc}
@@ -70,31 +70,31 @@ document.getElementById('gprsopt').style.display=(v==='gprs')?'':'none'}
 <form method=POST action=/save>
 <h2>WiFi</h2>
 <label>SSID</label><input name=wifi_ssid value="%ssid%">
-<label>Пароль</label><input name=wifi_pass value="%pass%">
-<label>AP SSID (конфиг-режим)</label><input name=ap_ssid value="%apssid%">
-<label>AP пароль</label><input name=ap_pass value="%appass%">
-<h2>Интернет</h2>
-<label>Способ подключения к интернету</label>
+<label>Password</label><input name=wifi_pass value="%pass%">
+<label>AP SSID (config mode)</label><input name=ap_ssid value="%apssid%">
+<label>AP password</label><input name=ap_pass value="%appass%">
+<h2>Internet</h2>
+<label>Internet connection method</label>
 <select name=net_mode onchange="nm(this.value)">
 <option value=wifi %wn%>WiFi</option>
-<option value=gprs %gn%>SIM-карта (GPRS)</option>
+<option value=gprs %gn%>SIM card (GPRS)</option>
 </select>
 <div id="wifiopt">
-<label>Проверка WiFi: URL (GET, ожидается HTTP 200)</label><input name=check_url value="%checkurl%">
+<label>WiFi check: URL (GET, HTTP 200 expected)</label><input name=check_url value="%checkurl%">
 </div>
 <div id="gprsopt">
-<label>Проверка GPRS: хост ping (AT+CIPPING)</label><input name=gprs_host value="%gprshost%">
-<label>APN (точка доступа)</label><input name=apn value="%apn%">
+<label>GPRS check: ping host (AT+CIPPING)</label><input name=gprs_host value="%gprshost%">
+<label>APN (access point)</label><input name=apn value="%apn%">
 <label>APN user</label><input name=apn_user value="%apnuser%">
 <label>APN pass</label><input name=apn_pass value="%apnpass%">
 </div>
-<h2>Поля как в JAR (WebSocket relay)</h2>
-<p style="font-size:12px;color:#9bc">Device ID и Encryption key генерируются автоматически при первом старте (как на новом компьютере с JAR). Их нужно прописать в настройках машины в OpenCARWINGS (sms_config, provider=smsgateway). Нельзя указывать чужие значения — у каждого устройства пара уникальна.</p>
+<h2>Fields as in the JAR (WebSocket relay)</h2>
+<p style="font-size:12px;color:#9bc">Device ID and Encryption key are generated automatically at first start (as on a fresh PC with the JAR). They must be entered in the car settings in OpenCARWINGS (sms_config, provider=smsgateway). Do not use other values — each device has a unique pair.</p>
 <label>Device ID</label><input name=jar_device_id value="%did%">
-<label>Encryption key (hex, можно с пробелами)</label><input name=jar_enc_key value="%ekey%">
+<label>Encryption key (hex, spaces allowed)</label><input name=jar_enc_key value="%ekey%">
 <label>WebSocket URL</label><input name=ws_url value="%wsurl%">
 <label><input type=checkbox name=ws_autoreconnect value=1 %ar%> Auto-reconnect WebSocket</label>
-<p><button type=submit>Сохранить и перезагрузить</button></p>
+<p><button type=submit>Save and reboot</button></p>
 </form>
 </html>)HTML";
 
@@ -190,7 +190,7 @@ void internet_check_now() {
     g_stats.internetMethod = "wifi";
     if (WiFi.status() != WL_CONNECTED) {
       g_stats.internetOk = false;
-      g_stats.internetInfo = "WiFi не подключен";
+      g_stats.internetInfo = "WiFi not connected";
       return;
     }
     HTTPClient http;
@@ -230,9 +230,9 @@ static void handle_save() {
   for (int i = 0; i < web.args(); i++) {
     cfg_update(web.argName(i), web.arg(i));
   }
-  cfg_ensure_generated_jar();   // пустые поля -> сгенерировать как на новом компе
+  cfg_ensure_generated_jar();   // empty fields -> generate like on a fresh PC
   cfg_save();
-  web.send(200, "text/html", "<html><body>Сохранено. Перезагрузка...</body></html>");
+  web.send(200, "text/html", "<html><body>Saved. Rebooting...</body></html>");
   delay(150);
   ESP.restart();
 }

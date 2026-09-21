@@ -36,7 +36,7 @@ void GprsLink::configure(const String& host, int port, const String& apn, const 
 }
 
 bool GprsLink::open() {
-  if (g_sim.passthroughActive) return true;   // уже в прозрачном режиме
+  if (g_sim.passthroughActive) return true;   // already in transparent mode
   if (!g_sim.tcpOpenPassthrough(_host, _port, _apn, _apnUser, _apnPass)) {
     Serial.printf("[gprsLink] tcpOpenPassthrough %s:%d FAIL\n", _host.c_str(), _port);
     g_sim.closeTcp();
