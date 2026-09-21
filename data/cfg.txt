@@ -1,0 +1,14 @@
+wifi_ssid=
+wifi_pass=
+ap_ssid=ESP32-TCU-SMS
+ap_pass=tcu12345
+net_mode=wifi
+check_url=http://138.16.224.7/
+gprs_host=138.16.224.7
+apn=internet
+apn_user=
+apn_pass=
+jar_device_id=
+jar_enc_key=
+ws_url=ws://138.16.224.7/ws/smsgateway/
+ws_autoreconnect=1
