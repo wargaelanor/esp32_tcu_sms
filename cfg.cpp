@@ -111,8 +111,6 @@ void cfg_update(const String& key, const String& val) {
   else if (key == "apn")             g_cfg.apn              = val;
   else if (key == "apn_user")        g_cfg.apn_user         = val;
   else if (key == "apn_pass")        g_cfg.apn_pass         = val;
-  else if (key == "jar_device_id")   g_cfg.jar_device_id    = val;
-  else if (key == "jar_enc_key")     g_cfg.jar_enc_key      = val;
   else if (key == "ws_url")          g_cfg.ws_url           = val;
   else if (key == "ws_autoreconnect") g_cfg.ws_autoreconnect = (val == "1");
   g_cfg.dirty = true;
