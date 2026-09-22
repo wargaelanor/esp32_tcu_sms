@@ -212,6 +212,7 @@ static void onParcelText(const String& jsonRaw) {
     json_get_int(jsonRaw.c_str(), jsonRaw.length(), "length", length);
     Serial.printf("[ws] PDU len=%d phone=%s pdu=%s\n", (int)length, phone.c_str(), pdu.c_str());
     g_lastPdu = pdu; g_lastPduLen = (int)length;
+    g_stats.smsIn = jsonRaw;   // message text as received from the server (kept until the next one)
     if (phone.length()) {
       bool ok = sendSmsFromPdu(pdu, (int)length);
       g_stats.smsLast = (ok ? "OK len=" : "FAIL len=") + String(length);
@@ -364,6 +365,7 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
     g_stats.smsLast = "len mismatch";
     return false;
   }
+  g_stats.smsOut = body;   // SMS body that will be written to the modem (kept until the next one)
   bool usingGprs = (g_cfg.net_mode == "gprs") && g_sim.passthroughActive;
   if (usingGprs) g_sim.backToAT();            // pause data link for SMS
   bool ok = g_sim.sendPdu(body.c_str(), cmgsLen);

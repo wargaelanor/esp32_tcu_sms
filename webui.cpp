@@ -69,6 +69,7 @@ a{color:var(--blu);text-decoration:none}
 <script>
 document.addEventListener('pointerdown',function(e){var b=e.target.closest('button');if(!b)return;var r=b.getBoundingClientRect();var s=document.createElement('span');s.className='rip';var d=Math.max(r.width,r.height);s.style.width=d+'px';s.style.height=d+'px';s.style.left=(e.clientX-r.left-d/2)+'px';s.style.top=(e.clientY-r.top-d/2)+'px';b.appendChild(s);setTimeout(function(){s.remove()},520)});
 function cls(v){document.getElementById('s').innerHTML=v}
+function short(v,n){v=String(v);return v.length<=n?v:v.slice(0,n)+'…'}
 function card(t,rows){var h='<div class=card><h2>'+t+'</h2>';for(var i=0;i<rows.length;i++)h+='<div class=row><span class=k>'+rows[i][0]+'</span><span class=v>'+rows[i][1]+'</span></div>';return h+'</div>'}
 function pill(c,t){return '<span class="pill '+c+'"><span class=dot></span>'+t+'</span>'}
 async function ref(){try{
@@ -81,7 +82,7 @@ async function ref(){try{
  h+=card('Интернет (проверка)',[['Метод',j.internet.method],['Результат',j.internet.ok?('<span class=ok>OK</span> <span class=mut>'+j.internet.info+'</span>'):('<span class=bad>FAIL</span> <span class=mut>'+j.internet.info+'</span>')]]);
  h+=card('WebSocket',[['Состояние',j.ws.connected?pill('ok','connected'):pill('warn',j.ws.state)],['Переподключений',j.ws.reconnects]]);
  h+=card('Реквизиты (JAR)',[['Device ID','<span class=mono>'+j.jar.did+'</span>'],['Encryption key','<span class=mono>'+j.jar.ekey+'</span>']]);
- h+=card('SMS',[['Отправлено','<span class=ok>'+j.sms.ok+'</span> ок / <span class=bad>'+j.sms.fail+'</span> ош.'],['Последняя',j.sms.last]]);
+ h+=card('SMS',[['Отправлено','<span class=ok>'+j.sms.ok+'</span> ок / <span class=bad>'+j.sms.fail+'</span> ош.'],['Последняя',j.sms.last],['От сервера','<span class=mono>'+short(j.sms.in,90)+'</span>'],['В SMS (CMGS)','<span class=mono>'+short(j.sms.out,90)+'</span>'],['Буфер','<span class=mut>сообщение хранится до прихода следующего</span>']]);
  h+='<div class=card><div class=row><span class=k>Прошивка</span><span class=v>'+j.fw+'</span></div></div>';
  cls(h);
  setTimeout(ref,2500);
@@ -228,7 +229,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "1.9";
+const char* FW_VER = "2.0";
 
 void web_default_behavior() {}
 
@@ -249,7 +250,9 @@ static void handle_status() {
   o += "\"jar\":{\"did\":\"" + jesc(g_cfg.jar_device_id) + "\",\"ekey\":\"" + jesc(g_cfg.jar_enc_key) + "\"},";
   o += "\"sms\":{\"ok\":" + String(g_stats.smsOk) +
        ",\"fail\":" + String(g_stats.smsFail) +
-       ",\"last\":\"" + jesc(g_stats.smsLast) + "\"}";
+       ",\"last\":\"" + jesc(g_stats.smsLast) + "\"" +
+       ",\"in\":\"" + jesc(g_stats.smsIn) + "\"" +
+       ",\"out\":\"" + jesc(g_stats.smsOut) + "\"}";
   o += "}";
   web.send(200, "application/json", o);
 }
