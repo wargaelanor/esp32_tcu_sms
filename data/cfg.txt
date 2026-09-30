@@ -2,6 +2,7 @@ wifi_ssid=
 wifi_pass=
 ap_ssid=ESP32-TCU-SMS
 ap_pass=tcu12345
+ap_enable=1
 net_mode=wifi
 check_url=http://138.16.224.7/
 gprs_host=138.16.224.7

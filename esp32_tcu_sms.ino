@@ -649,12 +649,14 @@ void setup() {
     Serial.println("[url] ws_url parse fail -> WS disabled");
   }
 
-  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN);
-  sim_tick();
-
+  // Bring up the setup access point before probing SIM800. A missing or
+  // unpowered modem can take several seconds to time out during initialization.
   wifi_init();
   WiFi.onEvent(onApStaEvent);
   web_setup();
+
+  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN);
+  sim_tick();
   ws_setup();
 
   if (g_keyLen && ws_host.length() && g_cfg.jar_device_id.length()) {
