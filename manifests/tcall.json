@@ -1,11 +1,15 @@
 {
   "name": "ESP32 TCU SMS for TTGO T-Call",
-  "version": "1.0.0",
+  "version": "2.1.1",
   "builds": [
     {
       "chipFamily": "ESP32",
       "parts": [
-        { "path": "../firmware/t-call.merged.bin", "offset": 0 }
+        { "path": "../firmware/tcall/bootloader.bin", "offset": 4096 },
+        { "path": "../firmware/tcall/partitions.bin", "offset": 32768 },
+        { "path": "../firmware/tcall/boot_app0.bin", "offset": 57344 },
+        { "path": "../firmware/tcall/firmware.bin", "offset": 65536 },
+        { "path": "../firmware/tcall/littlefs.bin", "offset": 2686976 }
       ]
     }
   ]
