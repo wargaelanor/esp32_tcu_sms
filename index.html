@@ -65,7 +65,7 @@
     <section class="panel">
       <h2 id="selected-board">ESP32-C3 + SIM800</h2>
       <p>Подключите плату качественным USB-кабелем, закройте Serial Monitor и нажмите кнопку ниже.</p>
-      <esp-web-install-button id="installer" manifest="manifests/c3.json"></esp-web-install-button>
+      <esp-web-install-button id="installer" manifest="manifests/c3.json?v=211"></esp-web-install-button>
       <div class="note"><strong>Важно:</strong> прошивка очищает содержимое flash. После завершения отключите и снова подключите питание. Точка <code>ESP32-TCU-SMS</code> должна появиться в течение 10–30 секунд.</div>
     </section>
 
@@ -102,8 +102,8 @@
     const installer = document.querySelector('#installer');
     const title = document.querySelector('#selected-board');
     const labels = {
-      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json'],
-      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json']
+      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json?v=211'],
+      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json?v=211']
     };
     document.querySelectorAll('input[name="board"]').forEach((input) => {
       input.addEventListener('change', () => {

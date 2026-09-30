@@ -1,6 +1,7 @@
 {
   "name": "ESP32 TCU SMS for ESP32-C3",
   "version": "2.1.1",
+  "new_install_prompt_erase": false,
   "builds": [
     {
       "chipFamily": "ESP32-C3",
