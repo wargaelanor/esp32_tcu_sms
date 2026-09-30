@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 TCU SMS | Прошивальщик</title>
+  <style>
+    :root { color-scheme: dark; --bg:#10151b; --card:#19222c; --line:#30404e; --text:#edf4f8; --muted:#a5b4bf; --accent:#54d6a0; --warn:#ffd166; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 15% 0%,#253b43 0,#10151b 42rem); color:var(--text); font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { width:min(940px,calc(100% - 32px)); margin:0 auto; padding:52px 0 64px; }
+    .eyebrow { color:var(--accent); font-size:.78rem; font-weight:750; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { max-width:700px; margin:10px 0 12px; font-size:clamp(2rem,6vw,4.2rem); line-height:1.02; letter-spacing:-.05em; }
+    .lead { max-width:680px; color:var(--muted); font-size:1.08rem; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:34px 0 18px; }
+    .board { position:relative; display:block; padding:22px; border:1px solid var(--line); border-radius:18px; background:rgba(25,34,44,.9); cursor:pointer; transition:.18s ease; }
+    .board:hover { border-color:#5a7788; transform:translateY(-2px); }
+    .board:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent),0 14px 35px #0003; }
+    .board input { position:absolute; opacity:0; }
+    .board strong { display:block; font-size:1.1rem; }
+    .board span { display:block; margin-top:7px; color:var(--muted); font-size:.92rem; }
+    .tag { display:inline-block; margin-bottom:18px; padding:4px 8px; border:1px solid #44625a; border-radius:99px; color:var(--accent); font-size:.72rem; }
+    .panel { padding:24px; border:1px solid var(--line); border-radius:18px; background:rgba(25,34,44,.82); }
+    .panel h2 { margin:0 0 8px; font-size:1.2rem; }
+    .panel p { margin:0 0 18px; color:var(--muted); }
+    esp-web-install-button { display:block; min-height:54px; }
+    esp-web-install-button::part(button) { width:100%; min-height:54px; border:0; border-radius:12px; background:var(--accent); color:#0b1915; font-size:1rem; font-weight:800; cursor:pointer; }
+    .steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:18px; }
+    .step { padding:16px; border-top:2px solid var(--line); color:var(--muted); font-size:.92rem; }
+    .step b { display:block; margin-bottom:5px; color:var(--text); }
+    .note { margin-top:18px; padding:14px 16px; border-left:3px solid var(--warn); color:#e7d9ae; background:#3a321d66; }
+    code { color:#d4f9e9; }
+    @media (max-width:650px) { main { padding-top:32px; } .grid,.steps { grid-template-columns:1fr; } }
+  </style>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module"></script>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">ESP32 TCU SMS</div>
+    <h1>Прошивальщик шлюза</h1>
+    <p class="lead">Выберите вашу плату и установите готовую прошивку прямо из Chrome или Edge. Установка выполняется через USB и не требует PlatformIO.</p>
+
+    <section class="grid" aria-label="Выбор платы">
+      <label class="board">
+        <input type="radio" name="board" value="c3" checked>
+        <span class="tag">USB CDC</span>
+        <strong>ESP32-C3 + SIM800</strong>
+        <span>Native USB, модем на GPIO4/GPIO5</span>
+      </label>
+      <label class="board">
+        <input type="radio" name="board" value="tcall">
+        <span class="tag">TTGO</span>
+        <strong>TTGO T-Call v1.3 / v1.4</strong>
+        <span>Классический ESP32, модем на GPIO26/GPIO27</span>
+      </label>
+    </section>
+
+    <section class="panel">
+      <h2 id="selected-board">ESP32-C3 + SIM800</h2>
+      <p>Подключите плату качественным USB-кабелем, закройте Serial Monitor и нажмите кнопку ниже.</p>
+      <esp-web-install-button id="installer" manifest="manifests/c3.json"></esp-web-install-button>
+      <div class="note"><strong>Важно:</strong> прошивка очищает содержимое flash. После запуска устройство само создаст новый <code>jar_device_id</code> и ключ шифрования.</div>
+    </section>
+
+    <section class="steps" aria-label="Инструкция">
+      <div class="step"><b>01 / USB</b>Подключите плату к компьютеру напрямую, без USB-хаба.</div>
+      <div class="step"><b>02 / BOOT</b>Если порт не найден, удерживайте BOOT, нажмите RESET и отпустите BOOT.</div>
+      <div class="step"><b>03 / Настройка</b>После прошивки подключитесь к точке доступа ESP32-TCU-SMS и откройте страницу устройства.</div>
+    </section>
+  </main>
+  <script>
+    const installer = document.querySelector('#installer');
+    const title = document.querySelector('#selected-board');
+    const labels = {
+      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json'],
+      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json']
+    };
+    document.querySelectorAll('input[name="board"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const [name, manifest] = labels[input.value];
+        title.textContent = name;
+        installer.setAttribute('manifest', manifest);
+      });
+    });
+  </script>
+</body>
+</html>
