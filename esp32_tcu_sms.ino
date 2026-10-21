@@ -381,6 +381,7 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
 // ------------------------------- SIM health -------------------------------
 static uint32_t simPollAt = 0;
 static uint32_t simLastDiag = 0;
+static bool simWasReg = false;
 void sim_tick() {
   if (g_sim.passthroughActive) return;   // transparent mode: UART busy with TLS stream
   if (millis() < simPollAt) return;
@@ -389,6 +390,10 @@ void sim_tick() {
   if (g_stats.simReady) {
     g_stats.simCsq = g_sim.csq();
     g_stats.simReg = g_sim.creg();
+    if (simWasReg && !g_stats.simReg) {
+      Serial.println("[sim] modem lost registration (power supply too weak?)");
+    }
+    simWasReg = g_stats.simReg;
     if (millis() - simLastDiag > 60000) {
       simLastDiag = millis();
       Serial.printf("[sim] csq=%d reg=%d up=%lus\n", (int)g_stats.simCsq, (int)g_stats.simReg, (unsigned long)(millis()/1000));
@@ -649,14 +654,17 @@ void setup() {
     Serial.println("[url] ws_url parse fail -> WS disabled");
   }
 
-  // Bring up the setup access point before probing SIM800. A missing or
-  // unpowered modem can take several seconds to time out during initialization.
+  // The SIM800 draws ~2 A in short bursts (boot, network TX). Together with the
+  // WiFi radio this can collapse the 3.3 V rail of the T-Call and corrupt the
+  // ESP32 memory (heap assert / stack canary / WDT reset), so the modem is
+  // powered and allowed to boot FIRST while the radio is still idle. The
+  // access point comes up right after the modem finished booting.
+  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN,
+              SIM800_RST_PIN, SIM800_POWER_PIN);
   wifi_init();
   WiFi.onEvent(onApStaEvent);
   web_setup();
 
-  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN,
-              SIM800_RST_PIN, SIM800_POWER_PIN);
   sim_tick();
   ws_setup();
 

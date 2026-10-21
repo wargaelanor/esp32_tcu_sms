@@ -2,15 +2,14 @@
 
 #if defined(BOARD_T_CALL)
 #include <Wire.h>
-// TTGO T-Call uses an IP5306 PMU: keep the boost converter on so the SIM800
-// rail does not drop when the board runs from battery (LilyGO setupPMU()).
-static void tcallPmuKeepOn() {
-  Wire.begin(21, 22);
-  Wire.beginTransmission(0x75);
-  Wire.write(0x00);
-  Wire.write(0x37);
-  Wire.endTransmission();
-}
+// TTGO T-Call power: the IP5306 PMU is left at its factory default (0x35 =
+// "boost auto").  Do NOT write 0x37 ("boost keep-on") here: with the boost
+// forced on the 3.3 V rail collapses as soon as the SIM800 draws its boot /
+// transmit current (~2 A peak) from a normal USB supply, and the ESP32 then
+// loses DRAM contents (heap assert / stack canary / WDT reset).  The modem
+// rail is fully controlled by the ESP32 (GPIO23 = POWER_ON), so the PMU does
+// not have to be forced on.
+static void tcallPmuInit() {}
 #endif
 
 Sim800 g_sim;
@@ -20,7 +19,7 @@ void Sim800::begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin,
   _ser = &ser;
   _pwrPin = pwrPin;
 #if defined(BOARD_T_CALL)
-  tcallPmuKeepOn();
+  tcallPmuInit();
 #endif
   // T-Call: release modem reset and enable its power rail BEFORE talking to it.
   // Without these the SIM800 is held in reset / unpowered and never answers AT.
@@ -30,6 +29,26 @@ void Sim800::begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin,
   ser.begin(baud, SERIAL_8N1, rxPin, txPin);
   delay(100);
   flushInput();
+  // The SIM800 needs ~12-20 s after its rail was switched on and then reports
+  // "RDY" / "Call Ready" / "SMS Ready" on its own.  Wait for that instead of
+  // pulsing PWRKEY while the module is still booting: such a pulse switches
+  // the module off again and adds a second current spike on the 3.3 V rail.
+  if (powerPin >= 0) {
+    Serial.println("[sim] waiting for modem boot (max 25s)...");
+    uint32_t t0 = millis();
+    String boot;
+    while (millis() - t0 < 25000) {
+      while (ser.available()) {
+        char c = (char)ser.read();
+        boot += c;
+        if (boot.length() > 256) boot.remove(0, boot.length() - 128);
+      }
+      if (boot.indexOf("RDY") >= 0 || boot.indexOf("Call Ready") >= 0 ||
+          boot.indexOf("SMS Ready") >= 0) break;
+      delay(20);
+    }
+    Serial.println("[sim] modem boot stage done");
+  }
   // The modem survives an ESP reset and may be left in transparent data mode: any
   // AT command then goes to the socket and gets no reply. 1.2s of silence + "+++" exits to AT.
   {
@@ -47,7 +66,7 @@ void Sim800::begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin,
   for (int i = 0; i < 3; i++) {
     sendCmd("AT", true);
     if (await("OK", 1500)) break;
-    if (_pwrPin >= 0) { powerPulse(); delay(2500); }
+    if (_pwrPin >= 0) { powerPulse(); delay(8000); }
     delay(1000);
   }
   sendCmd("ATE0", true); await("OK", 1500);
