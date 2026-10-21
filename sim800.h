@@ -4,8 +4,10 @@
 // Driver for SIM800/900 GSM module on a dedicated UART.
 class Sim800 {
  public:
-  // pwrPin: if >= 0, used to pulse PWRKEY on begin(). autoBoot: skip warning checks.
-  void begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin, int8_t pwrPin = -1);
+  // pwrPin: if >= 0, used to pulse PWRKEY on begin().
+  // rstPin/powerPin: if >= 0, driven HIGH on begin() (T-Call modem reset / power rail).
+  void begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin,
+             int8_t pwrPin = -1, int8_t rstPin = -1, int8_t powerPin = -1);
 
   // === basics ===
   bool at();                         // "AT" -> OK

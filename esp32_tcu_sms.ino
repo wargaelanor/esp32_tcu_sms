@@ -655,7 +655,8 @@ void setup() {
   WiFi.onEvent(onApStaEvent);
   web_setup();
 
-  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN);
+  g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN,
+              SIM800_RST_PIN, SIM800_POWER_PIN);
   sim_tick();
   ws_setup();
 

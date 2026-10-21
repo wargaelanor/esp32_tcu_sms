@@ -1,10 +1,32 @@
 #include "sim800.h"
 
+#if defined(BOARD_T_CALL)
+#include <Wire.h>
+// TTGO T-Call uses an IP5306 PMU: keep the boost converter on so the SIM800
+// rail does not drop when the board runs from battery (LilyGO setupPMU()).
+static void tcallPmuKeepOn() {
+  Wire.begin(21, 22);
+  Wire.beginTransmission(0x75);
+  Wire.write(0x00);
+  Wire.write(0x37);
+  Wire.endTransmission();
+}
+#endif
+
 Sim800 g_sim;
 
-void Sim800::begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin, int8_t pwrPin) {
+void Sim800::begin(HardwareSerial& ser, long baud, int8_t rxPin, int8_t txPin,
+                   int8_t pwrPin, int8_t rstPin, int8_t powerPin) {
   _ser = &ser;
   _pwrPin = pwrPin;
+#if defined(BOARD_T_CALL)
+  tcallPmuKeepOn();
+#endif
+  // T-Call: release modem reset and enable its power rail BEFORE talking to it.
+  // Without these the SIM800 is held in reset / unpowered and never answers AT.
+  if (rstPin >= 0) { pinMode(rstPin, OUTPUT); digitalWrite(rstPin, HIGH); }
+  if (powerPin >= 0) { pinMode(powerPin, OUTPUT); digitalWrite(powerPin, HIGH); }
+  if (rstPin >= 0 || powerPin >= 0) delay(100);
   ser.begin(baud, SERIAL_8N1, rxPin, txPin);
   delay(100);
   flushInput();
