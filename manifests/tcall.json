@@ -6,11 +6,11 @@
     {
       "chipFamily": "ESP32",
       "parts": [
-        { "path": "../firmware/tcall/bootloader.bin?v=212", "offset": 4096 },
-        { "path": "../firmware/tcall/partitions.bin?v=212", "offset": 32768 },
-        { "path": "../firmware/tcall/boot_app0.bin?v=212", "offset": 57344 },
-        { "path": "../firmware/tcall/firmware.bin?v=212", "offset": 65536 },
-        { "path": "../firmware/tcall/littlefs.bin?v=212", "offset": 2686976 }
+        { "path": "../firmware/tcall/bootloader.bin?v=2.1.2", "offset": 4096 },
+        { "path": "../firmware/tcall/partitions.bin?v=2.1.2", "offset": 32768 },
+        { "path": "../firmware/tcall/boot_app0.bin?v=2.1.2", "offset": 57344 },
+        { "path": "../firmware/tcall/firmware.bin?v=2.1.2", "offset": 65536 },
+        { "path": "../firmware/tcall/littlefs.bin?v=2.1.2", "offset": 2686976 }
       ]
     }
   ]
