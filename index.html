@@ -65,8 +65,8 @@
     <section class="panel">
       <h2 id="selected-board">ESP32-C3 + SIM800</h2>
       <p>Подключите плату качественным USB-кабелем, закройте Serial Monitor и нажмите кнопку ниже.</p>
-      <esp-web-install-button id="installer" manifest="manifests/c3.json?v=211"></esp-web-install-button>
-      <div class="note"><strong>Важно:</strong> прошивка очищает содержимое flash. После завершения отключите и снова подключите питание. Точка <code>ESP32-TCU-SMS</code> должна появиться в течение 10–30 секунд.</div>
+      <esp-web-install-button id="installer" manifest="manifests/c3.json?v=220"></esp-web-install-button>
+      <div class="note"><strong>Важно:</strong> установка полного образа перезаписывает сохранённую конфигурацию. После завершения отключите и снова подключите питание, затем настройте устройство через точку <code>ESP32-TCU-SMS</code>.</div>
     </section>
 
     <section class="steps" aria-label="Инструкция">
@@ -80,7 +80,7 @@
       <ol>
         <li>Вставьте SIM-карту с интернетом. Провайдер GPRS — любой, APN по умолчанию <code>internet</code> (уточните у оператора; можно изменить в настройках).</li>
         <li>Подключитесь к Wi-Fi точке устройства <code>ESP32-TCU-SMS</code> (пароль <code>tcu12345</code>), откройте <code>http://192.168.4.1</code> и перейдите в раздел «Настройка».</li>
-        <li>Укажите способ подключения к интернету: <b>WiFi</b> (SSID/пароль вашей сети) или <b>SIM-карта (GPRS)</b>. Через WiFi работа стабильнее и без задержек; через GPRS — немного медленнее и зависит от качества сигнала сотовой связи. Для GPRS при необходимости укажите APN, логин и пароль.</li>
+        <li>Укажите способ подключения к интернету: <b>Авто</b>, <b>WiFi</b> (SSID/пароль вашей сети) или <b>SIM-карта (GPRS)</b>. Через WiFi работа стабильнее и без задержек; через GPRS — немного медленнее и зависит от качества сигнала сотовой связи. Для GPRS при необходимости укажите APN, логин и пароль.</li>
         <li>Заполните поля ретранслятора:
           <ul>
             <li><b>Device ID</b> и <b>Encryption key</b> — те же значения, что указаны в настройках вашей машины на сервере (провайдер SMS → поле «Device ID» / «Encryption key»).</li>
@@ -96,14 +96,15 @@
     <section class="info tip" aria-labelledby="tip-title">
       <h2 id="tip-title">Совет</h2>
       <p>Для теста подойдёт любая SIM-карта с пакетом интернета — обычно достаточно «SMS-пакета» от вашего оператора. Устройство поддерживает авто-переподключение при обрыве сети и пережидает перезагрузку сервера. Если после настройки нет соединения — проверьте APN и наличие интернета на SIM (пункт меню «Проверить интернет»).</p>
+      <p>На TTGO T-Call Wi-Fi и точка <code>ESP32-TCU-SMS</code> временно отключаются примерно на 120 секунд при отправке команды и ожидании ответной SMS. Это защищает плату от перезагрузки во время передачи SIM800.</p>
     </section>
   </main>
   <script>
     const installer = document.querySelector('#installer');
     const title = document.querySelector('#selected-board');
     const labels = {
-      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json?v=211'],
-      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json?v=211']
+      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json?v=220'],
+      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json?v=220']
     };
     document.querySelectorAll('input[name="board"]').forEach((input) => {
       input.addEventListener('change', () => {
