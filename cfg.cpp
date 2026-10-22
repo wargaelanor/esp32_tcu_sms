@@ -59,7 +59,7 @@ void cfg_load() {
 else if (k == "ap_ssid")         g_cfg.ap_ssid = v;
     else if (k == "ap_pass")         g_cfg.ap_pass = v;
     else if (k == "ap_enable")       g_cfg.ap_enable = (v == "1");
-    else if (k == "net_mode")        g_cfg.net_mode        = v;
+    else if (k == "net_mode")        { g_cfg.net_mode = v; if (g_cfg.net_mode != "wifi" && g_cfg.net_mode != "gprs" && g_cfg.net_mode != "auto") g_cfg.net_mode = "auto"; }
     else if (k == "check_url")       g_cfg.check_url       = v;
     else if (k == "gprs_host")       g_cfg.gprs_host       = v;
     else if (k == "apn")             g_cfg.apn             = v;
@@ -69,6 +69,8 @@ else if (k == "ap_ssid")         g_cfg.ap_ssid = v;
     else if (k == "jar_enc_key")     g_cfg.jar_enc_key     = v;
     else if (k == "ws_url")          g_cfg.ws_url          = v;
     else if (k == "ws_autoreconnect") g_cfg.ws_autoreconnect = (v == "1");
+    else if (k == "relay_url")       g_cfg.relay_url       = v;
+    else if (k == "relay_enabled")   g_cfg.relay_enabled   = (v == "1");
   }
   f.close();
   g_cfg.loaded = true;
@@ -94,6 +96,8 @@ bool cfg_save() {
   f.println("jar_enc_key="    + g_cfg.jar_enc_key);
   f.println("ws_url="         + g_cfg.ws_url);
   f.println("ws_autoreconnect=" + String(g_cfg.ws_autoreconnect ? "1" : "0"));
+  f.println("relay_url="      + g_cfg.relay_url);
+  f.println("relay_enabled="  + String(g_cfg.relay_enabled ? "1" : "0"));
   f.close();
   g_cfg.dirty = false;
   return true;
@@ -105,7 +109,7 @@ void cfg_update(const String& key, const String& val) {
   else if (key == "ap_ssid")         g_cfg.ap_ssid          = val;
   else if (key == "ap_pass")         g_cfg.ap_pass          = val;
   else if (key == "ap_enable")       g_cfg.ap_enable        = (val == "1");
-  else if (key == "net_mode")        g_cfg.net_mode         = val;
+  else if (key == "net_mode")        { g_cfg.net_mode = val; if (g_cfg.net_mode != "wifi" && g_cfg.net_mode != "gprs" && g_cfg.net_mode != "auto") g_cfg.net_mode = "auto"; }
   else if (key == "check_url")       g_cfg.check_url        = val;
   else if (key == "gprs_host")       g_cfg.gprs_host        = val;
   else if (key == "apn")             g_cfg.apn              = val;
@@ -113,6 +117,8 @@ void cfg_update(const String& key, const String& val) {
   else if (key == "apn_pass")        g_cfg.apn_pass         = val;
   else if (key == "ws_url")          g_cfg.ws_url           = val;
   else if (key == "ws_autoreconnect") g_cfg.ws_autoreconnect = (val == "1");
+  else if (key == "relay_url")       g_cfg.relay_url        = val;
+  else if (key == "relay_enabled")   g_cfg.relay_enabled    = (val == "1");
   g_cfg.dirty = true;
 }
 

@@ -57,12 +57,12 @@ void portal_tick() {
   }
 
   // Build response (skip query answer section headers).
-  uint8_t r[512];
-  uint32_t rp = 0;
+  uint8_t r[600];
+  uint32_t rp = 12;
   memcpy(r, b, 12);                        // echo header
   r[2] = 0x81; r[3] = 0x80;                // response, recursion available
   r[6] = 0; r[7] = (qtype == 1) ? 1 : 0;   // ANCOUNT
-  rp = 12;
+  if (p - 12 > (int)sizeof(r) - 32) return;   // question section too long for the buffer
   memcpy(r + rp, b + 12, p - 12);          // echo question
   rp += (uint32_t)(p - 12);
 

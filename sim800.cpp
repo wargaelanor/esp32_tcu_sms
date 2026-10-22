@@ -1,4 +1,6 @@
 #include "sim800.h"
+#include "step.h"
+#include "esp_task_wdt.h"
 
 #if defined(BOARD_T_CALL)
 #include <Wire.h>
@@ -103,8 +105,12 @@ void Sim800::sendCmd(const char* s, bool withCR) {
 bool Sim800::await(const char* expect, uint32_t timeoutMs, String* response) {
   String acc;
   uint32_t t0 = millis();
+  STEP("sim_await");
   while (millis() - t0 < timeoutMs) {
-    while (_ser->available()) {
+    // The guard is important: with a continuous data stream (transparent mode)
+    // the inner loop would never end and the timeout would never be checked.
+    int guard = 256;
+    while (_ser->available() && guard-- > 0) {
       char c = (char)_ser->read();
       acc += c;
       if (acc.length() > 512) acc.remove(0, acc.length() - 256);
@@ -114,6 +120,7 @@ bool Sim800::await(const char* expect, uint32_t timeoutMs, String* response) {
       }
     }
     delay(1);
+    esp_task_wdt_reset();     // keep the task watchdog happy during long waits
   }
   if (response) *response = acc;      // return stale partial data on timeout too
   return false;
@@ -135,6 +142,38 @@ String Sim800::rawCmd(const char* cmd, uint32_t timeoutMs) {
     else               Serial.printf("[sim] -> %s\n[sim] <- (no answer)\n", cmd);
   }
   return acc;
+}
+
+String Sim800::cmdLong(const char* cmd, uint32_t timeoutMs) {
+  flushInput();
+  _ser->print(cmd);
+  _ser->print("\r\n");
+  String acc;
+  uint32_t t0 = millis();
+  STEP("sim_cmdlong");
+  while (millis() - t0 < timeoutMs) {
+    int guard = 256;
+    while (_ser->available() && guard-- > 0) {
+      acc += (char)_ser->read();
+      if (acc.length() > 6000) acc.remove(0, 1000);
+      if (acc.indexOf("\r\nOK\r\n") >= 0 || acc.indexOf("+CMS ERROR") >= 0 ||
+          acc.indexOf("\r\nERROR") >= 0 || acc.indexOf("\r\nNO CARRIER") >= 0) {
+        if (verbose) Serial.printf("[sim] -> %s\n[sim] <- %s\n", cmd, acc.c_str());
+        return acc;
+      }
+    }
+    delay(1);
+    esp_task_wdt_reset();
+  }
+  if (verbose) Serial.printf("[sim] -> %s\n[sim] <- (timeout)\n", cmd);
+  return acc;
+}
+
+bool Sim800::deleteSms(uint8_t index) {
+  char cmd[16];
+  snprintf(cmd, sizeof(cmd), "AT+CMGD=%u", (unsigned)index);
+  sendCmd(cmd, true);
+  return await("OK", 5000);
 }
 
 static String field_after(const String& acc, const char* tag) {
@@ -182,13 +221,16 @@ bool Sim800::sendPdu(const char* hex, int len) {
   String acc;
   snprintf(cmd, sizeof(cmd), "AT+CMGS=%d", len);
   sendCmd(cmd, true);
+  Serial.printf("[sim] CMGS=%d sent, waiting '>'\n", len);
   if (!await(">", 10000, &acc)) {
     Serial.print("[sms] no '>' prompt: "); Serial.println(acc);
     flushInput(); sendRaw("\x1A"); await("OK", 2000);   // unlock modem
     return false;
   }
+  Serial.println("[sim] '>' ok, writing PDU");
   _ser->print(hex);
   _ser->write(0x1A);
+  Serial.println("[sim] PDU written, waiting +CMGS:");
   acc = "";
   bool ok = await("+CMGS:", 15000, &acc);
   if (ok) {

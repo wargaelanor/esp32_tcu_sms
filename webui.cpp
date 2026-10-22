@@ -164,20 +164,21 @@ button.pri{background:var(--btn2);border-color:#1f6feb;width:100%;padding:13px;m
 <label class=i>Пароль точки доступа</label><input name=ap_pass type=password value="%appass%">
 </div>
 <div class=card><h2 class=i>Интернет</h2>
-<label class=i>Способ связи</label>
-<select name=net_mode onchange="nm(this.value)">
-<option value=wifi %wn% class=i>Wi-Fi</option>
-<option value=gprs %gn% class=i>SIM-карта (GPRS)</option>
-</select>
-<div id=wifiopt>
-<label class=i>Wi-Fi проверка: URL (нужен HTTP 200)</label><input name=check_url value="%checkurl%">
-</div>
-<div id=gprsopt>
-<label class=i>GPRS проверка: хост для пинга</label><input name=gprs_host value="%gprshost%">
-<label class=i>APN (точка доступа оператора)</label><input name=apn value="%apn%">
-<label class=i>APN логин</label><input name=apn_user value="%apnuser%">
-<label class=i>APN пароль</label><input name=apn_pass type=password value="%apnpass%">
-</div>
+  <label class=i>Способ связи</label>
+  <select name=net_mode onchange="nm(this.value)">
+  <option value=auto %an% class=i>Авто (Wi-Fi приоритет, GPRS при недоступности)</option>
+  <option value=wifi %wn% class=i>Только Wi-Fi</option>
+  <option value=gprs %gn% class=i>Только SIM-карта (GPRS)</option>
+  </select>
+  <div id=wifiopt>
+  <label class=i>Wi-Fi проверка: URL (нужен HTTP 200)</label><input name=check_url value="%checkurl%">
+  </div>
+  <div id=gprsopt>
+  <label class=i>GPRS проверка: хост для пинга</label><input name=gprs_host value="%gprshost%">
+  <label class=i>APN (точка доступа оператора)</label><input name=apn value="%apn%">
+  <label class=i>APN логин</label><input name=apn_user value="%apnuser%">
+  <label class=i>APN пароль</label><input name=apn_pass type=password value="%apnpass%">
+  </div>
 </div>
 <div class=card><h2 class=i>WebSocket relay (JAR)</h2>
 <p class="hint i">Device ID и Encryption key генерируются автоматически и не редактируются. Их нужно внести в настройки автомобиля в OpenCARWINGS (sms_config, provider=smsgateway). Новый ID/ключ создаются кнопкой на странице статуса.</p>
@@ -203,8 +204,9 @@ var E={
 'Пароль точки доступа':'AP password',
 'Интернет':'Internet',
 'Способ связи':'Connection type',
-'Wi-Fi':'Wi-Fi',
-'SIM-карта (GPRS)':'SIM card (GPRS)',
+'Авто (Wi-Fi приоритет, GPRS при недоступности)':'Auto (Wi-Fi priority, GPRS fallback)',
+'Только Wi-Fi':'Wi-Fi only',
+'Только SIM-карта (GPRS)':'SIM card only (GPRS)',
 'Wi-Fi проверка: URL (нужен HTTP 200)':'Wi-Fi check: URL (needs HTTP 200)',
 'GPRS проверка: хост для пинга':'GPRS check: ping host',
 'APN (точка доступа оператора)':'APN (operator point)',
@@ -229,9 +231,9 @@ function applyI18n(){cacheStatic();document.documentElement.lang=lang;
 function setLangBtn(){var b=document.getElementById('bLang');if(b)b.textContent=lang()==='ru'?'English':'Русский'}
 document.getElementById('bLang').onclick=function(){localStorage.setItem('lang',lang()==='ru'?'en':'ru');applyI18n();setLangBtn()};
 applyI18n();setLangBtn();
-function nm(v){document.getElementById('wifiopt').style.display=(v==='wifi')?'':'none';
-document.getElementById('gprsopt').style.display=(v==='gprs')?'':'none'}
-nm(document.querySelector('select[name=net_mode]').value);
+  function nm(v){document.getElementById('wifiopt').style.display=(v==='gprs')?'none':'';
+  document.getElementById('gprsopt').style.display=(v==='wifi')?'none':''}
+  nm(document.querySelector('select[name=net_mode]').value);
 function copyVal(b,id){
 var t=document.getElementById(id);t.focus();t.select();t.setSelectionRange(0,99999);
 var ok=false;try{ok=document.execCommand('copy');if(ok)window.getSelection().removeAllRanges()}catch(e){}
@@ -247,6 +249,7 @@ static String page_setup() {
   p.replace("%pass%",    g_cfg.wifi_pass);
   p.replace("%apssid%",  g_cfg.ap_ssid);
   p.replace("%appass%",  g_cfg.ap_pass);
+  p.replace("%an%",      g_cfg.net_mode == "auto" ? "selected" : "");
   p.replace("%wn%",      g_cfg.net_mode == "wifi" ? "selected" : "");
   p.replace("%gn%",      g_cfg.net_mode == "gprs" ? "selected" : "");
   p.replace("%checkurl%",g_cfg.check_url);
@@ -292,14 +295,15 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.1.3";
+const char* FW_VER = "2.2.0";
 
 void web_default_behavior() {}
 
 static void handle_status() {
   String o = "{";
   o += "\"fw\":\"" + String(FW_VER) + "\",";
-  o += "\"net_mode\":\"" + g_cfg.net_mode + "\",";
+  extern String net_eff_name();
+  o += "\"net_mode\":\"" + g_cfg.net_mode + "\",\"net_eff\":\"" + net_eff_name() + "\",";
   o += "\"wifi\":" + wifi_status_json() + ",";
   o += "\"sim\":{\"ready\":" + String(g_stats.simReady ? "true" : "false") +
        ",\"csq\":" + String(g_stats.simCsq) +
@@ -315,7 +319,12 @@ static void handle_status() {
        ",\"fail\":" + String(g_stats.smsFail) +
        ",\"last\":\"" + jesc(g_stats.smsLast) + "\"" +
        ",\"in\":\"" + jesc(g_stats.smsIn) + "\"" +
-       ",\"out\":\"" + jesc(g_stats.smsOut) + "\"}";
+       ",\"out\":\"" + jesc(g_stats.smsOut) + "\"" +
+       ",\"rx_parts\":" + String(g_stats.rxParts) +
+       ",\"rx_msgs\":" + String(g_stats.rxMsgs) +
+       ",\"relay_ok\":" + String(g_stats.relayOk) +
+       ",\"relay_fail\":" + String(g_stats.relayFail) +
+       ",\"rx_last\":\"" + jesc(g_stats.rxLast) + "\"}";
   o += "}";
   web.send(200, "application/json", o);
 }
@@ -420,15 +429,36 @@ static void handle_captive_setup() {
   handle_setup();
 }
 
+static void handle_captive_redirect_to_root() {
+  web.sendHeader("Location", "http://192.168.4.1/", true);
+  web.send(302, "text/html", "<html><head><meta http-equiv='refresh' content='0;url=http://192.168.4.1/'></head><body>Redirecting...</body></html>");
+}
+
 void web_setup() {
   portal_setup();
   web.on("/", handle_captive_root);
+  web.on("/index.html", handle_captive_root);
   web.on("/setup", handle_captive_setup);
+  web.on("/generate_204", handle_captive_redirect_to_root);
+  web.on("/gen_204", handle_captive_redirect_to_root);
+  web.on("/hotspot-detect.html", handle_captive_redirect_to_root);
+  web.on("/connecttest.txt", handle_captive_redirect_to_root);
+  web.on("/ncsi.txt", handle_captive_redirect_to_root);
+  web.on("/success.txt", handle_captive_redirect_to_root);
+  web.on("/library/test/success.html", handle_captive_redirect_to_root);
   web.on("/save", HTTP_POST, handle_save);
   web.on("/api/status", handle_status);
   web.on("/api/action", handle_action);
   web.onNotFound([]() {
     if (captive_redirect()) return;
+    // For AP clients trying to check connectivity
+    if (WiFi.getMode() & WIFI_AP) {
+      String host = web.hostHeader();
+      if (host.indexOf("192.168.4.1") < 0) {
+        handle_captive_redirect_to_root();
+        return;
+      }
+    }
     web.sendHeader("Location", "/setup", true);
     web.send(302, "", "");
   });

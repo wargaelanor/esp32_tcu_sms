@@ -17,6 +17,10 @@ class Sim800 {
   bool sendPdu(const char* hex, int len);
   // diagnostic: raw AT round-trip returning accumulated modem text
   String rawCmd(const char* cmd, uint32_t timeoutMs);  // AT+CMGS=<len> ... hex ... 0x1A -> +CMGS: OK
+  // same, but keeps the whole response (long answers such as AT+CMGR with a full PDU)
+  String cmdLong(const char* cmd, uint32_t timeoutMs);
+  // AT+CMGD: drop the message stored in the given slot
+  bool deleteSms(uint8_t index);
   void powerPulse();
 
   // === GPRS / data ===
