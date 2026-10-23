@@ -1,5 +1,6 @@
 #include "webui.h"
 #include "cfg.h"
+#include "boards.h"
 #include "sim800.h"
 #include "portal.h"
 #include <WiFi.h>
@@ -167,7 +168,7 @@ button.pri{background:var(--btn2);border-color:#1f6feb;width:100%;padding:13px;m
   <label class=i>Способ связи</label>
   <select name=net_mode onchange="nm(this.value)">
   <option value=wifi %wn% class=i>Только Wi-Fi</option>
-  <option value=gprs %gn% class=i>Только SIM-карта (GPRS)</option>
+  %gprsoption%
   </select>
   <div id=wifiopt>
   <label class=i>Wi-Fi проверка: URL (нужен HTTP 200)</label><input name=check_url value="%checkurl%">
@@ -248,7 +249,11 @@ static String page_setup() {
   p.replace("%apssid%",  g_cfg.ap_ssid);
   p.replace("%appass%",  g_cfg.ap_pass);
   p.replace("%wn%",      g_cfg.net_mode == "wifi" ? "selected" : "");
-  p.replace("%gn%",      g_cfg.net_mode == "gprs" ? "selected" : "");
+#if defined(BOARD_T_CALL)
+  p.replace("%gprsoption%", "");
+#else
+  p.replace("%gprsoption%", "<option value=gprs class=i>Только SIM-карта (GPRS)</option>");
+#endif
   p.replace("%checkurl%",g_cfg.check_url);
   p.replace("%gprshost%",g_cfg.gprs_host);
   p.replace("%apn%",     g_cfg.apn);
@@ -292,7 +297,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.2.3";
+const char* FW_VER = "2.2.4";
 
 void web_default_behavior() {}
 

@@ -155,7 +155,7 @@ static void wifi_resume() {
   WiFi.mode(useSta ? WIFI_AP_STA : WIFI_AP);
   startApIfEnabled();
   if (useSta) {
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(!WIFI_TX_GUARD);
     WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   }
 }
@@ -169,7 +169,7 @@ static void wifi_init() {
   }
   WiFi.mode(WIFI_AP_STA);
   startApIfEnabled();
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(!WIFI_TX_GUARD);
   WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   Serial.printf("[wifi] STA+AP; connecting to %s\n", g_cfg.wifi_ssid.c_str());
 }
