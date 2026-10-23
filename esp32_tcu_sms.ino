@@ -9,6 +9,7 @@
 #include <HTTPClient.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
 // Serial = HWCDC (native USB) with ARDUINO_USB_MODE=1 + CDC_ON_BOOT=1 (see platformio.ini)
 
 #include "cfg.h"
@@ -915,10 +916,14 @@ void setup() {
     ws_armed = true;
     wsNextTry = millis() + 1500;
   }
+  esp_err_t wdtInit = esp_task_wdt_init(30, true);
+  esp_err_t wdtAdd = esp_task_wdt_add(NULL);
+  Serial.printf("[wdt] loop 30s init=%d add=%d\n", (int)wdtInit, (int)wdtAdd);
   Serial.printf("[main] ready; key=%d bytes; ws_armed=%d\n", (int)g_keyLen, ws_armed);
 }
 
 void loop() {
+  esp_task_wdt_reset();
   static uint32_t lastHb = 0;
   if (millis() - lastHb >= 1000) {
     lastHb = millis();

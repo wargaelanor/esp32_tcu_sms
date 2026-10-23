@@ -292,7 +292,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.2.2";
+const char* FW_VER = "2.2.3";
 
 void web_default_behavior() {}
 

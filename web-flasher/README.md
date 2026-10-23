@@ -20,7 +20,7 @@ pio run -e esp32-c3-devkitm-1
 pio run -e esp32dev
 ```
 
-Release 2.2.2 uses explicit Wi-Fi/GPRS transport selection, incoming SMS
+Release 2.2.3 uses explicit Wi-Fi/GPRS transport selection, incoming SMS
 polling and the FSO HTTP relay. On TTGO T-Call, Wi-Fi is temporarily disabled during SIM800
 transmission and the following SMS receive window to avoid board resets.
 
