@@ -59,7 +59,7 @@ void cfg_load() {
 else if (k == "ap_ssid")         g_cfg.ap_ssid = v;
     else if (k == "ap_pass")         g_cfg.ap_pass = v;
     else if (k == "ap_enable")       g_cfg.ap_enable = (v == "1");
-    else if (k == "net_mode")        { g_cfg.net_mode = v; if (g_cfg.net_mode != "wifi" && g_cfg.net_mode != "gprs" && g_cfg.net_mode != "auto") g_cfg.net_mode = "auto"; }
+    else if (k == "net_mode")        g_cfg.net_mode = (v == "gprs") ? "gprs" : "wifi";
     else if (k == "check_url")       g_cfg.check_url       = v;
     else if (k == "gprs_host")       g_cfg.gprs_host       = v;
     else if (k == "apn")             g_cfg.apn             = v;
@@ -109,7 +109,7 @@ void cfg_update(const String& key, const String& val) {
   else if (key == "ap_ssid")         g_cfg.ap_ssid          = val;
   else if (key == "ap_pass")         g_cfg.ap_pass          = val;
   else if (key == "ap_enable")       g_cfg.ap_enable        = (val == "1");
-  else if (key == "net_mode")        { g_cfg.net_mode = val; if (g_cfg.net_mode != "wifi" && g_cfg.net_mode != "gprs" && g_cfg.net_mode != "auto") g_cfg.net_mode = "auto"; }
+  else if (key == "net_mode")        g_cfg.net_mode = (val == "gprs") ? "gprs" : "wifi";
   else if (key == "check_url")       g_cfg.check_url        = val;
   else if (key == "gprs_host")       g_cfg.gprs_host        = val;
   else if (key == "apn")             g_cfg.apn              = val;

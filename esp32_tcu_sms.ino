@@ -60,12 +60,6 @@ static uint32_t gprsNextUpTry = 0;
 static uint32_t lastWifiRetry = 0;
 static uint32_t staFailSince = 0;
 
-// effective link in "auto" mode: wifi or gprs
-static String g_netEff = "wifi";
-static uint32_t g_netLastCheck = 0;
-static uint32_t g_netCheckInt = 15000;
-static bool g_netWifiOk = false;
-
 // modem reserved for the incoming SMS (UART carries the data link otherwise)
 static uint32_t g_rxWindowUntil = 0;
 static bool g_relayBusy = false;
@@ -219,53 +213,7 @@ bool gprs_up_once() {
   return ok;
 }
 
-// ------------------------------- net auto -------------------------------
-// net_mode=auto: WiFi has priority, GPRS takes over when the internet check fails.
-String net_eff_name() { return g_netEff; }
-
-static bool net_check_wifi_inet() {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  HTTPClient http;
-  http.setTimeout(4000);
-  http.begin(g_cfg.check_url);
-  int code = http.GET();
-  http.end();
-  return (code == HTTP_CODE_OK);
-}
-
-static void net_auto_tick() {
-  if (g_cfg.net_mode == "wifi") {
-    g_netEff = "wifi";
-    return;
-  }
-  if (g_cfg.net_mode == "gprs") {
-    g_netEff = "gprs";
-    return;
-  }
-  if (millis() - g_netLastCheck < g_netCheckInt) return;
-  g_netLastCheck = millis();
-  STEP("net_http");
-  bool wifiOk = net_check_wifi_inet();
-  g_netWifiOk = wifiOk;
-  if (wifiOk && g_netEff != "wifi") {
-    g_netEff = "wifi";
-    Serial.println("[net] auto -> switch to Wi-Fi");
-    ws_force_reconnect();
-    return;
-  }
-  if (!wifiOk && g_netEff == "wifi") {
-    if (!gprsUpOnceOk) gprs_up_once();
-    if (gprsUpOnceOk) {
-      g_netEff = "gprs";
-      Serial.println("[net] auto -> fallback to GPRS");
-      ws_force_reconnect();
-    }
-    return;
-  }
-  if (!wifiOk && g_netEff != "wifi" && !gprsUpOnceOk) {
-    gprs_up_once();
-  }
-}
+String net_eff_name() { return g_cfg.net_mode; }
 
 // ------------------------------- WS -------------------------------
 static void buildWsPath(String& path) {
@@ -276,7 +224,7 @@ static void buildWsPath(String& path) {
 
 bool ws_start() {
   STEP("ws_start");
-  if (g_cfg.net_mode == "gprs" || g_netEff == "gprs") {
+  if (g_cfg.net_mode == "gprs") {
     if (!gprsUpOnceOk && !gprs_up_once()) return false;
     if (!gprsUpOnceOk) return false;
     String path = ws_path;
@@ -419,22 +367,15 @@ void ws_tick() {
     }
     return;
   }
-  bool gprs = (g_cfg.net_mode == "gprs" || g_netEff == "gprs");
+  bool gprs = (g_cfg.net_mode == "gprs");
 
   if (!ws_started) {
     if (g_relayBusy) return;                        // modem is used for the HTTP relay
     if (gprs && millis() < g_rxWindowUntil) return; // modem waits for the incoming SMS
     if (millis() < wsNextTry) return;
     if (!gprs && WiFi.status() != WL_CONNECTED) {
-      if (g_cfg.net_mode == "auto") {
-        // WiFi is down -> use GPRS from now on
-        if (!gprsUpOnceOk && !gprs_up_once()) { wsNextTry = millis() + 5000; return; }
-        g_netEff = "gprs";
-        gprs = true;
-      } else {
-        wsNextTry = millis() + 3000;
-        return;
-      }
+      wsNextTry = millis() + 3000;
+      return;
     }
     if (ws_start()) {
       ws_started = true;
@@ -504,7 +445,7 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
     return false;
   }
   g_stats.smsOut = body;   // SMS body that will be written to the modem (kept until the next one)
-  bool usingGprs = (g_netEff == "gprs") && g_sim.passthroughActive;
+  bool usingGprs = (g_cfg.net_mode == "gprs") && g_sim.passthroughActive;
   Serial.printf("[sms] begin send len=%d gprs=%d heap=%u\n", cmgsLen, (int)usingGprs, (unsigned)ESP.getFreeHeap());
   if (usingGprs) { g_sim.backToAT(); Serial.println("[sms] backToAT done"); }
   wifi_suspend();                          // T-Call is unstable with WiFi active during SIM800 TX
@@ -632,7 +573,7 @@ static void onFsoReply(const uint8_t* data, size_t len, const String& sender) {
     return;
   }
   bool ok;
-  if (g_netEff == "gprs" && WiFi.status() != WL_CONNECTED) ok = relay_via_gprs(data, len);
+  if (g_cfg.net_mode == "gprs" && WiFi.status() != WL_CONNECTED) ok = relay_via_gprs(data, len);
   else if (WiFi.status() == WL_CONNECTED)                       ok = relay_via_wifi(data, len);
   else                                                            ok = relay_via_gprs(data, len);
   if (ok) g_stats.relayOk++; else g_stats.relayFail++;
@@ -814,7 +755,7 @@ void cli_tick() {
           Serial.printf("[cfg] check_url=%s gprs_host=%s\n", g_cfg.check_url.c_str(), g_cfg.gprs_host.c_str());
           Serial.printf("[cfg] apn='%s' apn_user='%s' apn_pass='%s'\n", g_cfg.apn.c_str(), g_cfg.apn_user.c_str(), g_cfg.apn_pass.c_str());
           Serial.printf("[cfg] ws_url=%s autoreconnect=%d\n", g_cfg.ws_url.c_str(), g_cfg.ws_autoreconnect);
-          Serial.printf("[cfg] relay_url=%s enabled=%d net_eff=%s\n", g_cfg.relay_url.c_str(), (int)g_cfg.relay_enabled, g_netEff.c_str());
+          Serial.printf("[cfg] relay_url=%s enabled=%d net_eff=%s\n", g_cfg.relay_url.c_str(), (int)g_cfg.relay_enabled, net_eff_name().c_str());
         }
         else if (c.length() > 2 && c[0] == 's' && c[1] == ' ') {
           String kv = c.substring(2);
@@ -980,7 +921,6 @@ void loop() {
   STEP("cli");   cli_tick();
   STEP("web");   web_handle();
   STEP("wifi");  wifi_tick();
-  STEP("net");   net_auto_tick();
   STEP("sim");   sim_tick();
   STEP("smsrx"); g_smsRx.tick();
   STEP("ws");    ws_tick();

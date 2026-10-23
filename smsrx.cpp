@@ -92,30 +92,39 @@ struct SmsHeader {
   String   sender;
 };
 
+static bool validScts(const uint8_t* p) {
+  for (uint8_t i = 0; i < 6; i++) {
+    if ((p[i] & 0x0F) > 9 || ((p[i] >> 4) & 0x0F) > 9) return false;
+  }
+  return (p[6] & 0x07) <= 7 && ((p[6] >> 4) & 0x0F) <= 9;
+}
+
 static bool parseSmsHeader(const uint8_t* p, size_t len, size_t start, bool withScts, SmsHeader& h) {
   if (start >= len) return false;
   uint8_t b0 = p[start];
   if ((b0 & 0x03) != 0x00) return false;       // only SMS-DELIVER
   h.udhi = (b0 & 0x40) != 0;
-  uint8_t vpf = (uint8_t)((b0 >> 3) & 0x03);
   size_t i = start + 1;
-  if (withScts) i += 7;                        // TP-SCTS (optional)
   if (i + 3 > len) return false;
   uint8_t oaDigits = p[i++];                   // TP-OA length
-  if (oaDigits == 0 || oaDigits > 20) return false;
+  if (oaDigits == 0 || oaDigits > 40) return false;
   uint8_t toa = p[i++];                        // TP-OA type
-  if (toa != 0x91 && toa != 0x81) return false;
   size_t oaBytes = (oaDigits + 1) / 2;
   if (i + oaBytes + 3 > len) return false;
-  h.sender = decodeSemi(p + i, oaBytes, oaDigits);
-  if (toa == 0x91) h.sender = "+" + h.sender;
+  if ((toa & 0x70) == 0x50) {
+    h.sender = "<service>";                    // alphanumeric origin address
+  } else {
+    h.sender = decodeSemi(p + i, oaBytes, oaDigits);
+    if (toa == 0x91) h.sender = "+" + h.sender;
+  }
   i += oaBytes;
   i++;                                         // TP-PID
   if (i >= len) return false;
   h.dcs = p[i++];
-  if (vpf == 0x01) i += 1;
-  else if (vpf == 0x02) i += 7;
-  if (withScts) i += 7;                        // the second TP-SCTS
+  if (withScts) {
+    if (i + 7 > len || !validScts(p + i)) return false;
+    i += 7;                                    // TP-SCTS
+  }
   if (i + 1 > len) return false;
   h.udl = p[i++];
   if (h.udhi) {
@@ -146,8 +155,8 @@ bool SmsRx::handlePdu(const uint8_t* pdu, size_t len) {
   if (len < 10) return false;
   SmsHeader h;
   bool ok = false;
-  // The modem usually returns the PDU with the SMSC address, the FSO answer
-  // may come without it - and the TP-SCTS may be missing as well.
+  // The modem usually returns the PDU with the SMSC address. Some FSO replies
+  // omit TP-SCTS, so the standard layout is tried before the compact variant.
   for (int withSca = 1; withSca >= 0 && !ok; withSca--) {
     size_t start = withSca ? (size_t)(1 + pdu[0]) : 0;
     if (start >= len) continue;
@@ -169,18 +178,12 @@ bool SmsRx::handlePdu(const uint8_t* pdu, size_t len) {
   size_t avail = len - i;
   size_t udLen = 0;
   uint8_t dcsClass = (uint8_t)(dcs & 0x0C);
-  if (dcsClass == 0x04) {                    // 8 bit
-    udLen = avail > sizeof(ud) ? sizeof(ud) : avail;
-    memcpy(ud, pdu + i, udLen);
-  } else if (dcsClass == 0x00) {             // 7 bit
-    size_t septets = udl;
-    size_t packed = (septets * 7 + 7) / 8;
-    if (packed > avail) packed = avail;
-    udLen = unpack7(pdu + i, packed, septets, ud);
-  } else {                                   // 16 bit / unknown: forward as is
-    udLen = avail > sizeof(ud) ? sizeof(ud) : avail;
-    memcpy(ud, pdu + i, udLen);
+  if (dcsClass != 0x04) {
+    Serial.printf("[rx] ignored non-binary SMS dcs=0x%02X from %s\n", dcs, sender.c_str());
+    return true;
   }
+  udLen = avail > sizeof(ud) ? sizeof(ud) : avail;
+  memcpy(ud, pdu + i, udLen);
   if (udLen == 0) return false;
   _rxParts++;
 
@@ -239,7 +242,7 @@ bool SmsRx::readSlot(uint8_t index) {
   int p = resp.indexOf("+CMGR:");
   if (p < 0) p = resp.indexOf("+CMGS:");
   if (p < 0) {
-    if (resp.length() && resp.indexOf("ERROR") < 0)
+    if (resp.length() && resp.indexOf("ERROR") < 0 && resp.indexOf("OK") < 0)
       Serial.printf("[rx] slot %u: no header (%u bytes): %s\n", (unsigned)index,
                     (unsigned)resp.length(), resp.c_str());
     return false;
@@ -259,10 +262,7 @@ bool SmsRx::readSlot(uint8_t index) {
   bool ok = handlePdu(pdu, n);
   Serial.printf("[rx] slot %u: %u hex chars -> %u bytes, parsed=%d\n", (unsigned)index,
                 (unsigned)hex.length(), (unsigned)n, ok ? 1 : 0);
-  if (!ok) {
-    Serial.printf("[rx] slot %u raw=%s\n", (unsigned)index, hex.c_str());
-    return false;
-  }
+  if (!ok) return false;
   g_sim.deleteSms(index);
   return ok;
 }

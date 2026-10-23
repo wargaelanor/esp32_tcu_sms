@@ -166,7 +166,6 @@ button.pri{background:var(--btn2);border-color:#1f6feb;width:100%;padding:13px;m
 <div class=card><h2 class=i>Интернет</h2>
   <label class=i>Способ связи</label>
   <select name=net_mode onchange="nm(this.value)">
-  <option value=auto %an% class=i>Авто (Wi-Fi приоритет, GPRS при недоступности)</option>
   <option value=wifi %wn% class=i>Только Wi-Fi</option>
   <option value=gprs %gn% class=i>Только SIM-карта (GPRS)</option>
   </select>
@@ -204,7 +203,6 @@ var E={
 'Пароль точки доступа':'AP password',
 'Интернет':'Internet',
 'Способ связи':'Connection type',
-'Авто (Wi-Fi приоритет, GPRS при недоступности)':'Auto (Wi-Fi priority, GPRS fallback)',
 'Только Wi-Fi':'Wi-Fi only',
 'Только SIM-карта (GPRS)':'SIM card only (GPRS)',
 'Wi-Fi проверка: URL (нужен HTTP 200)':'Wi-Fi check: URL (needs HTTP 200)',
@@ -249,7 +247,6 @@ static String page_setup() {
   p.replace("%pass%",    g_cfg.wifi_pass);
   p.replace("%apssid%",  g_cfg.ap_ssid);
   p.replace("%appass%",  g_cfg.ap_pass);
-  p.replace("%an%",      g_cfg.net_mode == "auto" ? "selected" : "");
   p.replace("%wn%",      g_cfg.net_mode == "wifi" ? "selected" : "");
   p.replace("%gn%",      g_cfg.net_mode == "gprs" ? "selected" : "");
   p.replace("%checkurl%",g_cfg.check_url);
@@ -295,7 +292,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.2.0";
+const char* FW_VER = "2.2.1";
 
 void web_default_behavior() {}
 
