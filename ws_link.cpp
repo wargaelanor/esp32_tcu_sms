@@ -258,10 +258,12 @@ int WsLinkClient::processFrames() {
 }
 
 void WsLinkClient::closeLink(bool notify) {
+  bool wasOpen = _open;
+  bool linkWasConnected = _link && _link->isConnected();
   _open = false;
-  _link->close();
+  if (linkWasConnected) _link->close();
   _rxlen = _rxpos = 0;
-  if (notify && onDisconnect) onDisconnect();
+  if (notify && wasOpen && onDisconnect) onDisconnect();
 }
 
 void WsLinkClient::tick() {

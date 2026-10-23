@@ -13,6 +13,13 @@ struct Stats {
   String   smsLast = "";
   String   smsIn = "";    // last message text received from the server (decrypted JSON)
   String   smsOut = "";   // last SMS body actually sent to the modem (AT+CMGS)
+  uint32_t smsQueued = 0;
+  uint32_t smsRetries = 0;
+  uint32_t rxParts = 0;
+  uint32_t rxMsgs = 0;
+  uint32_t relayOk = 0;
+  uint32_t relayFail = 0;
+  String   rxLast = "";
   uint32_t lastSmsTs = 0;
   uint32_t simInitAttempts = 0;
   bool     simReady = false;

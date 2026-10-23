@@ -12,4 +12,6 @@ apn_pass=
 jar_device_id=
 jar_enc_key=
 ws_url=ws://138.16.224.7/ws/smsgateway/
+relay_url=http://138.16.224.7/ficosa/gdc
+relay_enabled=1
 ws_autoreconnect=1

@@ -6,6 +6,7 @@
 // Build: Arduino IDE 2.x, board "ESP32C3 Dev Module", core esp32 2.0.x. No third-party libraries.
 #include <Arduino.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 // Serial = HWCDC (native USB) with ARDUINO_USB_MODE=1 + CDC_ON_BOOT=1 (see platformio.ini)
 
 #include "cfg.h"
@@ -18,6 +19,11 @@
 #include "aes_k.h"
 #include "minijson.h"
 #include "webui.h"
+#include "smsrx.h"
+#include "step.h"
+
+const char* g_step = "boot";
+#define STEP(s) do { g_step = (s); } while (0)
 
 // ------------------------------- hardware pins -------------------------------
 // Selected in boards.h depending on the target board (default ESP32-C3 + SIM800,
@@ -38,6 +44,29 @@ static GprsLink     g_gprsLink;
 static TlsLink      g_tlsLink(&g_gprsLink);
 static WsLinkClient g_wsLinkClient;
 
+// SMS queue: keep the newest server command until the SIM800 acknowledges it.
+struct SmsJob {
+  String body;
+  int    len = 0;
+  uint8_t attempts = 0;
+  bool   valid = false;
+  uint32_t nextAt = 0;
+};
+static SmsJob g_smsJob;
+static const uint8_t SMS_MAX_ATTEMPTS = 3;
+static uint32_t g_smsBusyUntil = 0;
+static uint32_t g_rxWindowUntil = 0;
+static uint32_t g_wsResumeAt = 0;
+
+struct RelayJob {
+  uint8_t data[1600];
+  size_t len = 0;
+  uint8_t attempts = 0;
+  bool valid = false;
+  uint32_t nextAt = 0;
+};
+static RelayJob g_relayJob;
+
 static bool   ws_armed = false;      // connection allowed to stay up
   static bool   ws_started = false;    // connection is up
 static uint32_t wsNextTry = 0;
@@ -50,6 +79,18 @@ static uint32_t gprsNextUpTry = 0;
 
 static uint32_t lastWifiRetry = 0;
 static uint32_t staFailSince = 0;
+static bool wifiWasConnected = false;
+static bool wifiSuspended = false;
+static uint32_t wifiResumeAt = 0;
+static String g_netEff = "wifi";
+static uint32_t g_gprsDownSince = 0;
+static uint32_t g_gprsUpAt = 0;
+static bool g_relayBusy = false;
+#if defined(BOARD_T_CALL)
+static constexpr bool WIFI_TX_GUARD = true;
+#else
+static constexpr bool WIFI_TX_GUARD = false;
+#endif
 
 // ------------------------------- wifi -------------------------------
 static bool apRunning = false;
@@ -105,6 +146,43 @@ static void startApIfEnabled() {
   if (!apRunning) startAp();
 }
 
+static void wifi_suspend() {
+  if (!WIFI_TX_GUARD || wifiSuspended) return;
+  wifiSuspended = true;
+  Serial.println("[radio] suspend WiFi (SIM800 TX)");
+  WiFi.softAPdisconnect(true);
+  apRunning = false;
+  WiFi.mode(WIFI_OFF);
+  delay(50);
+}
+
+static void wifi_resume() {
+  if (!WIFI_TX_GUARD || !wifiSuspended) return;
+  if (millis() < wifiResumeAt) return;
+  wifiSuspended = false;
+  wifiResumeAt = 0;
+  Serial.println("[radio] resume WiFi");
+  bool useSta = g_netEff != "gprs" && g_cfg.wifi_ssid.length();
+  WiFi.mode(useSta ? WIFI_AP_STA : WIFI_AP);
+  startApIfEnabled();
+  if (useSta) {
+    WiFi.setAutoReconnect(!WIFI_TX_GUARD);
+    WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
+    lastWifiRetry = millis();
+  }
+}
+
+static void wifi_gprs_ap_only() {
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false, false);
+  WiFi.mode(WIFI_AP);
+  apRunning = false;
+  startApIfEnabled();
+  wifiSuspended = false;
+  wifiResumeAt = 0;
+  Serial.println("[radio] GPRS mode: AP only, STA disabled");
+}
+
 static void wifi_init() {
   if (!g_cfg.wifi_ssid.length()) {
     WiFi.mode(WIFI_AP);
@@ -113,30 +191,59 @@ static void wifi_init() {
   }
   WiFi.mode(WIFI_AP_STA);
   startApIfEnabled();
-  WiFi.setAutoReconnect(true);
+  WiFi.setAutoReconnect(!WIFI_TX_GUARD);
   WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   Serial.printf("[wifi] STA+AP; connecting to %s\n", g_cfg.wifi_ssid.c_str());
 }
 
 static void wifi_tick() {
+  if (wifiSuspended) {
+    // wifi_resume uses AP-only mode during GPRS, so no STA scan can race the
+    // SIM800. In WiFi mode it restores AP+STA normally.
+    if (wifiResumeAt && millis() >= wifiResumeAt) wifi_resume();
+    return;
+  }
+  // While GPRS owns the radio, never touch WiFi: even a background STA retry
+  // triggers a scan and can corrupt the WiFi stack while SIM800 is streaming.
+  if (g_netEff == "gprs") return;
   if (!g_cfg.wifi_ssid.length()) {
     if (!apRunning && millis() > 500) startApIfEnabled();
     return;
   }
+  static uint32_t lastApTry = 0;
+  if (g_cfg.ap_enable && !apRunning && millis() - lastApTry > 5000) {
+    lastApTry = millis();
+    startAp();
+  }
   wl_status_t st = WiFi.status();
   if (st == WL_CONNECTED) {
     staFailSince = 0;
-    startApIfEnabled();   // AP available for reconfiguration (if ap_enable)
+    if (!wifiWasConnected) {
+      wifiWasConnected = true;
+      Serial.printf("[wifi] STA restored (uptime=%lus rssi=%d)\n",
+                    (unsigned long)(millis()/1000), (int)WiFi.RSSI());
+    }
+    startApIfEnabled();
     return;
   }
+  if (wifiWasConnected) {
+    wifiWasConnected = false;
+    Serial.println("[wifi] STA lost; reconnect is scheduled");
+    lastWifiRetry = millis() - 9000;
+  }
   if (staFailSince == 0) staFailSince = millis();
-  if (millis() - lastWifiRetry > 10000) {
+  // Avoid a full scan every 10 s: the scan draws a current spike and can be
+  // the trigger for the T-Call brownout. Retry at a moderate interval.
+  if (millis() - lastWifiRetry > 15000) {
     lastWifiRetry = millis();
     WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
+    Serial.println("[wifi] retry STA connect");
   }
 }
 
 // ------------------------------- GPRS -------------------------------
+String net_eff_name() { return g_netEff; }
+
 static bool gprs_up_once() {
   String ip;
   bool ok = g_sim.gprsUp(g_cfg.apn, g_cfg.apn_user, g_cfg.apn_pass, ip);
@@ -156,7 +263,7 @@ static void buildWsPath(String& path) {
 }
 
 bool ws_start() {
-  if (g_cfg.net_mode == "gprs") {
+  if (g_netEff == "gprs") {
     if (!gprsUpOnceOk && !gprs_up_once()) return false;
     if (!gprsUpOnceOk) return false;
     String path = ws_path;
@@ -195,7 +302,11 @@ void ws_force_reconnect() {
   wsNextTry = millis() + 500;
 }
 
-static bool sendSmsFromPdu(const String& pduHex, int cmgsLen);
+static bool sendSmsNow(const String& pduHex, int cmgsLen);
+static bool relayViaWifi(const uint8_t* data, size_t len);
+static bool relayViaGprs(const uint8_t* data, size_t len);
+static void relay_queue_tick();
+static void sms_queue_tick();
 
 static String g_lastPdu;
 static int    g_lastPduLen = 0;
@@ -212,11 +323,33 @@ static void onParcelText(const String& jsonRaw) {
     json_get_int(jsonRaw.c_str(), jsonRaw.length(), "length", length);
     Serial.printf("[ws] PDU len=%d phone=%s pdu=%s\n", (int)length, phone.c_str(), pdu.c_str());
     g_lastPdu = pdu; g_lastPduLen = (int)length;
-    g_stats.smsIn = jsonRaw;   // message text as received from the server (kept until the next one)
+    g_stats.smsIn = jsonRaw;   // message text received from the server (kept until the next one)
     if (phone.length()) {
-      bool ok = sendSmsFromPdu(pdu, (int)length);
-      g_stats.smsLast = (ok ? "OK len=" : "FAIL len=") + String(length);
-      if (ok) g_stats.smsOk++; else g_stats.smsFail++;
+      int octets = pdu.length() / 2;
+      int wanted = (int)length;
+      if (octets == wanted) pdu = "00" + pdu;
+      if (pdu.length() / 2 != wanted + 1) {
+        g_stats.smsLast = "len mismatch";
+        g_stats.smsFail++;
+        return;
+      }
+      if (g_smsJob.valid) {
+        if (g_smsJob.body == pdu && g_smsJob.len == wanted) {
+          Serial.println("[sms] duplicate queued PDU ignored");
+        } else {
+          g_stats.smsFail++;
+          Serial.println("[sms] queue busy; new PDU rejected");
+        }
+        return;
+      }
+      g_smsJob.body = pdu;
+      g_smsJob.len = wanted;
+      g_smsJob.attempts = 0;
+      g_smsJob.valid = true;
+      g_smsJob.nextAt = millis();
+      g_stats.smsQueued++;
+      g_stats.smsLast = "queued len=" + String(wanted);
+      Serial.printf("[sms] queued len=%d queue=%u\n", wanted, (unsigned)g_stats.smsQueued);
     }
   } else if (type == "sms") {
     Serial.println("[ws] sms(plain) not supported, skip");   // plain-text route is not used
@@ -257,7 +390,10 @@ static void ws_onConnect() {
   g_stats.wsReconnects = 0;
   lastPingSent = millis();
   lastPongRecv = millis();
-  if (g_cfg.net_mode == "gprs") {
+  if (WiFi.status() == WL_CONNECTED) g_netEff = "wifi";
+  else if (g_cfg.net_mode == "gprs") g_netEff = "gprs";
+  else g_netEff = "wifi";
+  if (g_netEff == "gprs") {
     Serial.printf("[ws] connected via GPRS (heap=%u)\n", (unsigned)ESP.getFreeHeap());
   } else {
     Serial.printf("[ws] connected (rssi=%d heap=%u)\n", (int)WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
@@ -269,6 +405,7 @@ static void ws_onDisconnect() {
   g_stats.wsState = "down";
   Serial.printf("[ws] disconnected (wifi=%d rssi=%d heap=%u)\n",
                 (int)WiFi.status(), (int)WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
+  if (WiFi.status() != WL_CONNECTED && g_gprsDownSince == 0) g_gprsDownSince = millis();
   if (!g_cfg.ws_autoreconnect) {
     ws_armed = false;
     ws_started = false;
@@ -287,12 +424,49 @@ void ws_setup() {
 }
 
 void ws_tick() {
+  // Dynamic transport selection: keep WiFi as the primary path. If STA has
+  // been unavailable long enough and GPRS is enabled, switch at a frame
+  // boundary; switch back immediately when WiFi recovers.
+  if (WiFi.status() == WL_CONNECTED) {
+    if (g_netEff != "wifi" || g_gprsDownSince) {
+      Serial.println("[net] WiFi available -> switch to WiFi transport");
+      g_netEff = "wifi";
+      g_gprsDownSince = 0;
+      if (g_wsLinkClient.connected() || g_sim.passthroughActive) {
+        g_wsLinkClient.stop();
+        g_sim.closeTcp();
+      }
+      wifiResumeAt = 0;
+      wifi_resume();
+      ws_force_reconnect();
+    }
+  } else if (g_netEff == "gprs") {
+    // GPRS owns the radio until an actual WiFi connection is available.
+  } else if (g_gprsDownSince == 0) {
+    g_gprsDownSince = millis();
+  } else if (g_cfg.net_mode == "gprs" && millis() - g_gprsDownSince > 30000 &&
+             g_netEff != "gprs" && !g_smsJob.valid && millis() >= g_rxWindowUntil) {
+    Serial.println("[net] WiFi unavailable 30s -> switch to GPRS transport");
+    g_netEff = "gprs";
+    g_ws.stop();
+    ws_started = false;
+    wsNextTry = millis() + 500;
+    wifi_gprs_ap_only();
+  }
+
   if (!ws_armed) {
     g_ws.tick();
     g_wsLinkClient.stop();        // don't retry or keep the modem alive while disabled
     return;
   }
-  bool gprs = (g_cfg.net_mode == "gprs");
+  bool gprs = (g_netEff == "gprs");
+
+  // The SIM800 UART is exclusive: after a climate PDU is accepted, leave it
+  // in AT mode until the FSO reply has been read and relayed.
+  if (gprs && (g_smsJob.valid || g_relayJob.valid || millis() < g_rxWindowUntil ||
+               g_relayBusy || g_sim.passthroughActive && !g_wsLinkClient.connected())) {
+    return;
+  }
 
   if (!ws_started) {
     if (millis() < wsNextTry) return;
@@ -311,6 +485,7 @@ void ws_tick() {
   }
 
   if (gprs) {
+    if (!gprsUpOnceOk && !gprs_up_once()) return;
     g_wsLinkClient.tick();
     if (g_wsLinkClient.connected()) {
       if (millis() - lastPingSent > 15000) {
@@ -352,30 +527,209 @@ void ws_tick() {
 // ------------------------------- PDU -> SMS -------------------------------
 // SIM800: AT+CMGS=tpduLen, body — the ENTIRE PDU including the SCA octet (leading 00 =
 // "SMSC from SIM"). Without the leading 00 the modem hangs waiting for an SCA octet.
-static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
+static bool sendSmsNow(const String& pduHex, int cmgsLen) {
   if (cmgsLen <= 0 || !g_cfg.jar_device_id.length()) return false;
-  String body = pduHex;
-  int octets = body.length() / 2;
-  if (octets == cmgsLen) {
-    body = "00" + body;   // server sent TPDU without SCA -> prepend SCA `00`
-    octets++;
+  g_stats.smsOut = pduHex;
+  // The T-Call radio and SIM800 share a fragile power rail. GPRS TCP must be
+  // closed before CMGS, and WiFi is kept quiet during the modem TX window.
+  if (g_netEff == "gprs" && g_sim.passthroughActive) {
+    g_wsLinkClient.stop();
+    Serial.printf("[sms] GPRS socket closed, passthrough=%d\n",
+                  (int)g_sim.passthroughActive);
+    ws_started = false;
+    if (g_sim.passthroughActive) return false;
+  } else if (g_netEff == "wifi") {
+    // Stop the library reconnect timer before taking the radio down for CMGS.
+    g_ws.stop();
+    ws_started = false;
   }
-  if (octets != cmgsLen + 1) {
-    Serial.printf("[sms] len mismatch pduHex=%d len=%d\n", pduHex.length(), cmgsLen);
-    g_stats.smsLast = "len mismatch";
-    return false;
-  }
-  g_stats.smsOut = body;   // SMS body that will be written to the modem (kept until the next one)
-  bool usingGprs = (g_cfg.net_mode == "gprs") && g_sim.passthroughActive;
-  if (usingGprs) g_sim.backToAT();            // pause data link for SMS
-  bool ok = g_sim.sendPdu(body.c_str(), cmgsLen);
-  if (usingGprs) {
-    g_sim.closeTcp();                          // data link closed -> WS will reconnect on its own
-    ws_force_reconnect();
-  }
+  wifi_suspend();
+  bool ok = g_sim.sendPdu(pduHex.c_str(), cmgsLen);
+  if (WIFI_TX_GUARD) wifiResumeAt = millis() + 2000;
   Serial.printf("[sms] sendPdu len=%d -> %s\n", cmgsLen, ok ? "OK" : "FAIL");
   g_stats.lastSmsTs = millis();
+  g_smsBusyUntil = millis() + 30000;
+  g_rxWindowUntil = millis() + 120000;
+  g_smsRx.setPollInterval(2000);
+  if (g_netEff == "gprs") {
+    g_wsResumeAt = g_rxWindowUntil;
+    wsNextTry = g_rxWindowUntil;
+    Serial.println("[sms] GPRS WS paused for 120 s SMS reply window");
+  } else {
+    wsNextTry = wifiResumeAt + 1500;
+    Serial.println("[sms] WiFi resume scheduled after CMGS guard");
+  }
   return ok;
+}
+
+static void sms_queue_tick() {
+  if (!g_smsJob.valid || millis() < g_smsJob.nextAt) return;
+  if (g_sim.passthroughActive) {
+    if (g_netEff == "gprs") {
+      Serial.println("[sms] closing GPRS WS before CMGS");
+      g_wsLinkClient.stop();
+      ws_started = false;
+    }
+    return;   // GprsLink::close exits data mode; send on the next loop pass.
+  }
+  if (g_stats.simReady && !g_stats.simReg) {
+    Serial.println("[sms] waiting for SIM registration");
+    g_smsJob.nextAt = millis() + 3000;
+    return;
+  }
+  if (g_smsJob.attempts >= SMS_MAX_ATTEMPTS) {
+    Serial.println("[sms] queue exhausted; command dropped");
+    g_smsJob.valid = false;
+    g_stats.smsLast = "retry exhausted";
+    g_stats.smsFail++;
+    return;
+  }
+  g_smsJob.attempts++;
+  bool ok = sendSmsNow(g_smsJob.body, g_smsJob.len);
+  if (ok) {
+    g_stats.smsOk++;
+    g_stats.smsLast = "OK len=" + String(g_smsJob.len) + " attempt=" + String(g_smsJob.attempts);
+    g_smsJob.valid = false;
+  } else {
+    g_stats.smsRetries++;
+    g_stats.smsLast = "retry " + String(g_smsJob.attempts) + " len=" + String(g_smsJob.len);
+    g_smsJob.nextAt = millis() + 5000 * g_smsJob.attempts;
+  }
+}
+
+// ------------------------------- FSO reply relay -------------------------------
+static bool relayViaWifi(const uint8_t* data, size_t len) {
+  if (!g_cfg.relay_url.length()) return false;
+  if (WiFi.status() != WL_CONNECTED || wifiSuspended) return false;
+  HTTPClient http;
+  http.setTimeout(20000);
+  http.setReuse(false);
+  if (!http.begin(g_cfg.relay_url)) {
+    Serial.println("[relay] http.begin FAIL");
+    return false;
+  }
+  http.addHeader("Content-Type", "application/octet-stream");
+  http.addHeader("User-Agent", "NISSAN TCU");
+  int code = http.POST(const_cast<uint8_t*>(data), len);
+  Serial.printf("[relay] wifi POST %s -> %d\n", g_cfg.relay_url.c_str(), code);
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+static bool relayViaGprs(const uint8_t* data, size_t len) {
+  if (!g_cfg.relay_url.length() || g_sim.passthroughActive) return false;
+  String host = "138.16.224.7";
+  String path = "/ficosa/gdc";
+  int scheme = g_cfg.relay_url.indexOf("://");
+  String rest = scheme >= 0 ? g_cfg.relay_url.substring(scheme + 3) : g_cfg.relay_url;
+  int slash = rest.indexOf('/');
+  String hostPort = slash >= 0 ? rest.substring(0, slash) : rest;
+  if (slash >= 0) path = rest.substring(slash);
+  int colon = hostPort.indexOf(':');
+  int port = 80;
+  if (colon >= 0) {
+    host = hostPort.substring(0, colon);
+    port = hostPort.substring(colon + 1).toInt();
+  } else if (hostPort.length()) {
+    host = hostPort;
+  }
+  if (port <= 0) return false;
+
+  g_relayBusy = true;
+  wifi_suspend();
+  bool ok = false;
+  if (g_sim.tcpOpenPassthrough(host, port, g_cfg.apn, g_cfg.apn_user, g_cfg.apn_pass)) {
+    char header[320];
+    int n = snprintf(header, sizeof(header),
+                     "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: NISSAN TCU\r\n"
+                     "Content-Type: application/octet-stream\r\nContent-Length: %u\r\n"
+                     "Connection: close\r\n\r\n",
+                     path.c_str(), host.c_str(), (unsigned)len);
+    bool wrote = n > 0 && (size_t)n < sizeof(header) &&
+                 g_sim.tcpWrite((const uint8_t*)header, (size_t)n) == (size_t)n &&
+                 g_sim.tcpWrite(data, len) == len;
+    String response;
+    uint8_t chunk[256];
+    uint32_t started = millis();
+    while (wrote && millis() - started < 20000) {
+      int got = g_sim.tcpRead(chunk, sizeof(chunk), 1000);
+      if (got < 0) break;
+      if (got > 0) {
+        for (int i = 0; i < got; i++) response += (char)chunk[i];
+        if (response.length() > 512) response.remove(0, response.length() - 256);
+        if (response.indexOf("\r\n\r\n") >= 0) break;
+      }
+    }
+    int firstSpace = response.indexOf(' ');
+    int code = 0;
+    if (response.startsWith("HTTP/") && firstSpace > 0)
+      code = response.substring(firstSpace + 1, firstSpace + 4).toInt();
+    ok = code >= 200 && code < 300;
+    Serial.printf("[relay] gprs POST %s:%d%s -> %d\n", host.c_str(), port, path.c_str(), code);
+    g_sim.closeTcp();
+  } else {
+    Serial.println("[relay] GPRS TCP open failed");
+  }
+  g_relayBusy = false;
+  if (WIFI_TX_GUARD) wifiResumeAt = millis() + 2000;
+  return ok;
+}
+
+static void onFsoReply(const uint8_t* data, size_t len, const String& sender) {
+  g_stats.rxParts = g_smsRx.parts();
+  g_stats.rxMsgs = g_smsRx.messages();
+  g_stats.rxLast = g_smsRx.lastInfo() + " from " + sender;
+  g_rxWindowUntil = millis();
+  g_wsResumeAt = 0;
+  if (!g_cfg.relay_enabled) {
+    Serial.println("[relay] disabled, answer kept on device only");
+    return;
+  }
+  if (!g_cfg.relay_url.length()) {
+    Serial.println("[relay] no relay_url configured");
+    g_stats.relayFail++;
+    return;
+  }
+  if (len > sizeof(g_relayJob.data)) len = sizeof(g_relayJob.data);
+  memcpy(g_relayJob.data, data, len);
+  g_relayJob.len = len;
+  g_relayJob.attempts = 0;
+  g_relayJob.valid = true;
+  g_relayJob.nextAt = millis();
+  Serial.printf("[relay] queued answer %u bytes\n", (unsigned)len);
+  relay_queue_tick();
+}
+
+static void relay_queue_tick() {
+  if (!g_relayJob.valid || millis() < g_relayJob.nextAt) return;
+  if (g_sim.passthroughActive || millis() < g_rxWindowUntil) return;
+  bool ok = WiFi.status() == WL_CONNECTED && !wifiSuspended
+    ? relayViaWifi(g_relayJob.data, g_relayJob.len)
+    : relayViaGprs(g_relayJob.data, g_relayJob.len);
+  if (ok) {
+    g_stats.relayOk++;
+    g_stats.rxLast += " -> relayed";
+    Serial.printf("[relay] answer %u bytes -> OK\n", (unsigned)g_relayJob.len);
+    g_relayJob.valid = false;
+    g_smsRx.setPollInterval(6000);
+    if (g_netEff == "gprs") {
+      g_smsJob.valid = false;
+      g_rxWindowUntil = 0;
+      wsNextTry = millis() + 1500;
+    }
+    return;
+  }
+  g_relayJob.attempts++;
+  if (g_relayJob.attempts >= 4) {
+    g_stats.relayFail++;
+    g_stats.rxLast += " -> RELAY FAIL";
+    Serial.printf("[relay] answer %u bytes -> FAIL after retries\n", (unsigned)g_relayJob.len);
+    g_relayJob.valid = false;
+    return;
+  }
+  g_relayJob.nextAt = millis() + 10000 * g_relayJob.attempts;
+  Serial.printf("[relay] retry %u in %u ms\n", (unsigned)g_relayJob.attempts,
+                (unsigned)(10000 * g_relayJob.attempts));
 }
 
 // ------------------------------- SIM health -------------------------------
@@ -403,7 +757,8 @@ void sim_tick() {
     if (ok) {
       g_stats.simReady = true;
       g_sim.setSmsPduMode();
-      Serial.println("[sim] ready");
+      g_smsRx.begin();
+      Serial.println("[sim] ready + SMS RX enabled");
     } else {
       g_stats.simInitAttempts++;
       if (g_stats.simInitAttempts % 8 == 1) {
@@ -661,6 +1016,7 @@ void setup() {
   // access point comes up right after the modem finished booting.
   g_sim.begin(SIM_SERIAL, 115200, SIM800_RX_PIN, SIM800_TX_PIN, SIM800_PWR_PIN,
               SIM800_RST_PIN, SIM800_POWER_PIN);
+  g_smsRx.setCallback(onFsoReply);
   wifi_init();
   WiFi.onEvent(onApStaEvent);
   web_setup();
@@ -676,10 +1032,18 @@ void setup() {
 }
 
 void loop() {
-  cli_tick();
-  web_handle();
-  wifi_tick();
-  sim_tick();
-  ws_tick();
+  static uint32_t lastHb = 0;
+  if (millis() - lastHb >= 1000) {
+    lastHb = millis();
+    Serial.printf("[hb] %s t=%lu heap=%u\n", g_step, (unsigned long)millis(), (unsigned)ESP.getFreeHeap());
+  }
+  STEP("cli");   cli_tick();
+  STEP("web");   web_handle();
+  STEP("wifi");  wifi_tick();
+  STEP("sim");   sim_tick();
+  STEP("smsrx"); g_smsRx.tick();
+  STEP("smsq");  sms_queue_tick();
+  STEP("relay"); relay_queue_tick();
+  STEP("ws");    ws_tick();
   delay(5);
 }

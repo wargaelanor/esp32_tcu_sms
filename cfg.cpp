@@ -68,6 +68,8 @@ else if (k == "ap_ssid")         g_cfg.ap_ssid = v;
     else if (k == "jar_device_id")   g_cfg.jar_device_id   = v;
     else if (k == "jar_enc_key")     g_cfg.jar_enc_key     = v;
     else if (k == "ws_url")          g_cfg.ws_url          = v;
+    else if (k == "relay_url")       g_cfg.relay_url       = v;
+    else if (k == "relay_enabled")   g_cfg.relay_enabled   = (v == "1");
     else if (k == "ws_autoreconnect") g_cfg.ws_autoreconnect = (v == "1");
   }
   f.close();
@@ -93,6 +95,8 @@ bool cfg_save() {
   f.println("jar_device_id="  + g_cfg.jar_device_id);
   f.println("jar_enc_key="    + g_cfg.jar_enc_key);
   f.println("ws_url="         + g_cfg.ws_url);
+  f.println("relay_url="      + g_cfg.relay_url);
+  f.println("relay_enabled="  + String(g_cfg.relay_enabled ? "1" : "0"));
   f.println("ws_autoreconnect=" + String(g_cfg.ws_autoreconnect ? "1" : "0"));
   f.close();
   g_cfg.dirty = false;
@@ -111,8 +115,10 @@ void cfg_update(const String& key, const String& val) {
   else if (key == "apn")             g_cfg.apn              = val;
   else if (key == "apn_user")        g_cfg.apn_user         = val;
   else if (key == "apn_pass")        g_cfg.apn_pass         = val;
-  else if (key == "ws_url")          g_cfg.ws_url           = val;
-  else if (key == "ws_autoreconnect") g_cfg.ws_autoreconnect = (val == "1");
+  else if (key == "ws_url")           g_cfg.ws_url           = val;
+  else if (key == "relay_url")        g_cfg.relay_url        = val;
+  else if (key == "relay_enabled")    g_cfg.relay_enabled    = (val == "1");
+  else if (key == "ws_autoreconnect")  g_cfg.ws_autoreconnect = (val == "1");
   g_cfg.dirty = true;
 }
 

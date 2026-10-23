@@ -22,6 +22,8 @@ struct Config {
   String jar_device_id;
   String jar_enc_key;      // hex, may contain spaces, 16/24/32 bytes
   String ws_url = "ws://138.16.224.7/ws/smsgateway/";
+  String relay_url = "http://138.16.224.7/ficosa/gdc";
+  bool   relay_enabled = true;
   bool   ws_autoreconnect = true;
   // Stats helpers
   bool   loaded = false;

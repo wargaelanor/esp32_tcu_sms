@@ -187,6 +187,8 @@ button.pri{background:var(--btn2);border-color:#1f6feb;width:100%;padding:13px;m
 <div class=ro><input name=jar_enc_key id=ekey readonly value="%ekey%"><button type=button class="cpy i" onclick="copyVal(this,'ekey')">Копировать</button></div>
 <label class=i>WebSocket URL</label><input name=ws_url value="%wsurl%">
 <label><input type=checkbox name=ws_autoreconnect value=1 %ar%><span class=i> Авто-переподключение WebSocket</span></label>
+<label class=i>URL ответа FSO</label><input name=relay_url value="%relayurl%">
+<label><input type=checkbox name=relay_enabled value=1 %relayenabled%><span class=i> Передавать ответы FSO на сервер</span></label>
 </div>
 <button class="pri i" type=submit>Сохранить и перезагрузить</button>
 </form>
@@ -215,6 +217,7 @@ var E={
 'Encryption key (hex)':'Encryption key (hex)',
 'WebSocket URL':'WebSocket URL',
 'Авто-переподключение WebSocket':'Auto-reconnect WebSocket',
+'URL ответа FSO':'FSO reply URL','Передавать ответы FSO на сервер':'Relay FSO replies to server',
 'Сохранить и перезагрузить':'Save & reboot',
 'Копировать':'Copy',
 'Скопировано':'Copied','Выделено':'Selected'
@@ -258,6 +261,8 @@ static String page_setup() {
   p.replace("%ekey%",    g_cfg.jar_enc_key);
   p.replace("%wsurl%",   g_cfg.ws_url);
   p.replace("%ar%",      g_cfg.ws_autoreconnect ? "checked" : "");
+  p.replace("%relayurl%", g_cfg.relay_url);
+  p.replace("%relayenabled%", g_cfg.relay_enabled ? "checked" : "");
   return p;
 }
 
@@ -292,7 +297,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.1.3";
+const char* FW_VER = "2.1.4";
 
 void web_default_behavior() {}
 
@@ -300,10 +305,17 @@ static void handle_status() {
   String o = "{";
   o += "\"fw\":\"" + String(FW_VER) + "\",";
   o += "\"net_mode\":\"" + g_cfg.net_mode + "\",";
+  extern String net_eff_name();
+  o += "\"net_eff\":\"" + net_eff_name() + "\",";
   o += "\"wifi\":" + wifi_status_json() + ",";
   o += "\"sim\":{\"ready\":" + String(g_stats.simReady ? "true" : "false") +
        ",\"csq\":" + String(g_stats.simCsq) +
-       ",\"reg\":" + String(g_stats.simReg ? "true" : "false") + "},";
+       ",\"reg\":" + String(g_stats.simReg ? "true" : "false") +
+       ",\"rx_parts\":" + String(g_stats.rxParts) +
+       ",\"rx_msgs\":" + String(g_stats.rxMsgs) +
+       ",\"relay_ok\":" + String(g_stats.relayOk) +
+       ",\"relay_fail\":" + String(g_stats.relayFail) +
+       ",\"rx_last\":\"" + jesc(g_stats.rxLast) + "\"},";
   o += "\"gprs\":{\"up\":" + String(g_stats.gprsUp ? "true" : "false") +
        ",\"ip\":\"" + jesc(g_stats.gprsIp) + "\"},";
   o += "\"internet\":{\"ok\":" + String(g_stats.internetOk ? "true" : "false") +
@@ -322,8 +334,15 @@ static void handle_status() {
 
 void internet_check_now() {
   g_stats.internetInfo = "...";
-  if (g_cfg.net_mode == "gprs") {
+  if (g_cfg.net_mode == "gprs" || g_sim.passthroughActive) {
     g_stats.internetMethod = "gprs";
+    if (g_sim.passthroughActive) {
+      g_stats.internetOk = g_stats.wsConnected;
+      g_stats.internetInfo = g_stats.wsConnected
+        ? "GPRS TCP/WebSocket connected (AT diagnostics unavailable in data mode)"
+        : "GPRS TCP data mode active, WebSocket not connected";
+      return;
+    }
     int sent = 0, rcvd = 0, rtt = 0;
     uint32_t t0 = millis();
     bool ok = g_sim.pingHost(g_cfg.gprs_host, &sent, &rcvd, &rtt);
@@ -375,6 +394,8 @@ static void handle_action() {
 }
 
 static void handle_save() {
+  g_cfg.ws_autoreconnect = false;
+  g_cfg.relay_enabled = false;
   for (int i = 0; i < web.args(); i++) {
     cfg_update(web.argName(i), web.arg(i));
   }

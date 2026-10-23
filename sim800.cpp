@@ -104,7 +104,10 @@ bool Sim800::await(const char* expect, uint32_t timeoutMs, String* response) {
   String acc;
   uint32_t t0 = millis();
   while (millis() - t0 < timeoutMs) {
-    while (_ser->available()) {
+    // A bounded batch keeps the loop responsive while the modem is streaming
+    // bytes (for example after entering transparent mode).
+    int guard = 256;
+    while (_ser->available() && guard-- > 0) {
       char c = (char)_ser->read();
       acc += c;
       if (acc.length() > 512) acc.remove(0, acc.length() - 256);
@@ -135,6 +138,36 @@ String Sim800::rawCmd(const char* cmd, uint32_t timeoutMs) {
     else               Serial.printf("[sim] -> %s\n[sim] <- (no answer)\n", cmd);
   }
   return acc;
+}
+
+String Sim800::cmdLong(const char* cmd, uint32_t timeoutMs) {
+  flushInput();
+  _ser->print(cmd);
+  _ser->print("\r\n");
+  String acc;
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    int guard = 256;
+    while (_ser->available() && guard-- > 0) {
+      acc += (char)_ser->read();
+      if (acc.length() > 6000) acc.remove(0, 1000);
+      if (acc.indexOf("\r\nOK\r\n") >= 0 || acc.indexOf("+CMS ERROR") >= 0 ||
+          acc.indexOf("\r\nERROR") >= 0 || acc.indexOf("\r\nNO CARRIER") >= 0) {
+        if (verbose) Serial.printf("[sim] -> %s\n[sim] <- %s\n", cmd, acc.c_str());
+        return acc;
+      }
+    }
+    delay(1);
+  }
+  if (verbose) Serial.printf("[sim] -> %s\n[sim] <- (timeout)\n", cmd);
+  return acc;
+}
+
+bool Sim800::deleteSms(uint8_t index) {
+  char cmd[16];
+  snprintf(cmd, sizeof(cmd), "AT+CMGD=%u", (unsigned)index);
+  sendCmd(cmd, true);
+  return await("OK", 5000);
 }
 
 static String field_after(const String& acc, const char* tag) {
