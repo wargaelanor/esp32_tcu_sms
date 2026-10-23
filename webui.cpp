@@ -292,7 +292,7 @@ void web_handle() {
   web.handleClient();
 }
 
-const char* FW_VER = "2.2.1";
+const char* FW_VER = "2.2.2";
 
 void web_default_behavior() {}
 
@@ -330,6 +330,13 @@ void internet_check_now() {
   g_stats.internetInfo = "...";
   if (g_cfg.net_mode == "gprs") {
     g_stats.internetMethod = "gprs";
+    if (g_sim.passthroughActive) {
+      g_stats.internetOk = g_stats.wsConnected;
+      g_stats.internetInfo = g_stats.wsConnected
+        ? "GPRS TCP/WebSocket connected (AT diagnostics unavailable in data mode)"
+        : "GPRS TCP data mode active, WebSocket not connected";
+      return;
+    }
     int sent = 0, rcvd = 0, rtt = 0;
     uint32_t t0 = millis();
     bool ok = g_sim.pingHost(g_cfg.gprs_host, &sent, &rcvd, &rtt);

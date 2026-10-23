@@ -150,18 +150,20 @@ static void wifi_resume() {
   if (!wifiSuspended) return;
   wifiSuspended = false;
   Serial.println("[wifi] resume radio");
-  WiFi.mode(g_cfg.wifi_ssid.length() ? WIFI_AP_STA : WIFI_AP);
+  bool useSta = g_cfg.net_mode == "wifi" && g_cfg.wifi_ssid.length();
+  WiFi.mode(useSta ? WIFI_AP_STA : WIFI_AP);
   startApIfEnabled();
-  if (g_cfg.wifi_ssid.length()) {
+  if (useSta) {
     WiFi.setAutoReconnect(true);
     WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   }
 }
 
 static void wifi_init() {
-  if (!g_cfg.wifi_ssid.length()) {
+  if (g_cfg.net_mode == "gprs" || !g_cfg.wifi_ssid.length()) {
     WiFi.mode(WIFI_AP);
     startApIfEnabled();
+    if (g_cfg.net_mode == "gprs") Serial.println("[wifi] GPRS mode: AP only, STA disabled");
     return;
   }
   WiFi.mode(WIFI_AP_STA);
@@ -186,7 +188,7 @@ static void wifi_tick() {
       startAp();
     }
   }
-  if (!g_cfg.wifi_ssid.length()) return;
+  if (g_cfg.net_mode != "wifi" || !g_cfg.wifi_ssid.length()) return;
   if (wifiSuspended) return;              // no scans while the modem transmits
   wl_status_t st = WiFi.status();
   if (st == WL_CONNECTED) {
@@ -392,9 +394,13 @@ void ws_tick() {
     STEP("ws_gprs");
     g_wsLinkClient.tick();
     if (g_wsLinkClient.connected()) {
+      if (g_wsLinkClient.aliveSinceLastPong) {
+        lastPongRecv = millis();
+        g_wsLinkClient.aliveSinceLastPong = false;
+      }
       if (millis() - lastPingSent > 15000) {
         lastPingSent = millis();
-        g_wsLinkClient.sendText("ping");
+        g_wsLinkClient.sendPing();
       }
       if (millis() - lastPongRecv > 60000) {
         g_stats.wsReconnects++;
