@@ -6,10 +6,6 @@
 // Build: Arduino IDE 2.x, board "ESP32C3 Dev Module", core esp32 2.0.x. No third-party libraries.
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_task_wdt.h"
 // Serial = HWCDC (native USB) with ARDUINO_USB_MODE=1 + CDC_ON_BOOT=1 (see platformio.ini)
 
 #include "cfg.h"
@@ -22,7 +18,6 @@
 #include "aes_k.h"
 #include "minijson.h"
 #include "webui.h"
-#include "smsrx.h"
 
 // ------------------------------- hardware pins -------------------------------
 // Selected in boards.h depending on the target board (default ESP32-C3 + SIM800,
@@ -31,11 +26,6 @@
 // ------------------------------- global state -------------------------------
 static uint8_t g_key[32];
 static size_t  g_keyLen = 0;
-
-// diagnostics: name of the step the main loop is currently in (printed by the heartbeat)
-#include "step.h"
-const char* g_step = "boot";
-
 
 static String ws_host, ws_path;
 static int ws_port = 80;
@@ -60,14 +50,6 @@ static uint32_t gprsNextUpTry = 0;
 
 static uint32_t lastWifiRetry = 0;
 static uint32_t staFailSince = 0;
-
-// modem reserved for the incoming SMS (UART carries the data link otherwise)
-static uint32_t g_rxWindowUntil = 0;
-static bool g_relayBusy = false;
-static uint32_t wifiResumeAt = 0;
-
-void ws_force_reconnect();
-String net_eff_name();
 
 // ------------------------------- wifi -------------------------------
 static bool apRunning = false;
@@ -123,89 +105,39 @@ static void startApIfEnabled() {
   if (!apRunning) startAp();
 }
 
-// The board is powered from the same rail as the SIM800. While the modem does
-// its TX burst (~2 A peak) the WiFi radio has to stay quiet, otherwise the
-// 3V3 rail collapses and the ESP32 dies with a watchdog reset (the AP
-// disappears and the SMS is lost). The radio is switched off for the time of
-// the transmission and restored right after it.
-static bool wifiSuspended = false;
-#if defined(BOARD_T_CALL)
-static constexpr bool WIFI_TX_GUARD = true;
-#else
-static constexpr bool WIFI_TX_GUARD = false;
-#endif
-
-static void wifi_suspend() {
-  if (!WIFI_TX_GUARD) return;
-  if (wifiSuspended) return;
-  wifiSuspended = true;
-  Serial.println("[wifi] suspend radio (SIM800 TX)");
-  WiFi.softAPdisconnect(true);
-  apRunning = false;
-  WiFi.mode(WIFI_OFF);
-  delay(50);
-}
-
-static void wifi_resume() {
-  if (!WIFI_TX_GUARD) return;
-  if (!wifiSuspended) return;
-  wifiSuspended = false;
-  Serial.println("[wifi] resume radio");
-  bool useSta = g_cfg.net_mode == "wifi" && g_cfg.wifi_ssid.length();
-  WiFi.mode(useSta ? WIFI_AP_STA : WIFI_AP);
-  startApIfEnabled();
-  if (useSta) {
-    WiFi.setAutoReconnect(!WIFI_TX_GUARD);
-    WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
-  }
-}
-
 static void wifi_init() {
-  if (g_cfg.net_mode == "gprs" || !g_cfg.wifi_ssid.length()) {
+  if (!g_cfg.wifi_ssid.length()) {
     WiFi.mode(WIFI_AP);
     startApIfEnabled();
-    if (g_cfg.net_mode == "gprs") Serial.println("[wifi] GPRS mode: AP only, STA disabled");
     return;
   }
   WiFi.mode(WIFI_AP_STA);
   startApIfEnabled();
-  WiFi.setAutoReconnect(!WIFI_TX_GUARD);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   Serial.printf("[wifi] STA+AP; connecting to %s\n", g_cfg.wifi_ssid.c_str());
 }
 
 static void wifi_tick() {
-  if (wifiSuspended && wifiResumeAt && millis() >= wifiResumeAt) {
-    wifiResumeAt = 0;
-    wifi_resume();
+  if (!g_cfg.wifi_ssid.length()) {
+    if (!apRunning && millis() > 500) startApIfEnabled();
+    return;
   }
-  // The AP is the only way to reconfigure the device, so it must be available
-  // at any time - independent of the STA state (before it was only restarted
-  // while the STA was connected, so a lost AP stayed lost).
-  static uint32_t lastApTry = 0;
-  if (g_cfg.ap_enable) {
-    if (!apRunning && !wifiSuspended && millis() - lastApTry > 5000) {
-      lastApTry = millis();
-      startAp();
-    }
-  }
-  if (g_cfg.net_mode != "wifi" || !g_cfg.wifi_ssid.length()) return;
-  if (wifiSuspended) return;              // no scans while the modem transmits
   wl_status_t st = WiFi.status();
   if (st == WL_CONNECTED) {
     staFailSince = 0;
+    startApIfEnabled();   // AP available for reconfiguration (if ap_enable)
     return;
   }
   if (staFailSince == 0) staFailSince = millis();
-  // The scan itself loads the power rail, so it must be rare.
-  if (millis() - lastWifiRetry > 60000) {
+  if (millis() - lastWifiRetry > 10000) {
     lastWifiRetry = millis();
     WiFi.begin(g_cfg.wifi_ssid.c_str(), g_cfg.wifi_pass.c_str());
   }
 }
 
 // ------------------------------- GPRS -------------------------------
-bool gprs_up_once() {
+static bool gprs_up_once() {
   String ip;
   bool ok = g_sim.gprsUp(g_cfg.apn, g_cfg.apn_user, g_cfg.apn_pass, ip);
   g_stats.gprsUp = ok;
@@ -216,8 +148,6 @@ bool gprs_up_once() {
   return ok;
 }
 
-String net_eff_name() { return g_cfg.net_mode; }
-
 // ------------------------------- WS -------------------------------
 static void buildWsPath(String& path) {
   if (g_cfg.jar_device_id.length()) {
@@ -226,7 +156,6 @@ static void buildWsPath(String& path) {
 }
 
 bool ws_start() {
-  STEP("ws_start");
   if (g_cfg.net_mode == "gprs") {
     if (!gprsUpOnceOk && !gprs_up_once()) return false;
     if (!gprsUpOnceOk) return false;
@@ -309,10 +238,6 @@ static void onWsText(const char* txt, size_t len) {
 static void onWsBin(const uint8_t* d, size_t len) {
   uint8_t plain[2048];
   size_t plen = 0;
-  if (len > sizeof(plain)) {
-    Serial.printf("[ws] parcel too big (%u bytes), skipped\n", (unsigned)len);
-    return;
-  }
   if (!aes_cbc_decrypt_parcel(g_key, g_keyLen, d, len, plain, plen)) {
     Serial.println("[ws] aes decrypt FAIL");
     Serial.printf("[ws] FAILHEX(%u): ", (unsigned)len);
@@ -364,17 +289,12 @@ void ws_setup() {
 void ws_tick() {
   if (!ws_armed) {
     g_ws.tick();
-    if (ws_started) {                 // don't retry or keep the modem alive while disabled
-      g_wsLinkClient.stop();
-      ws_started = false;
-    }
+    g_wsLinkClient.stop();        // don't retry or keep the modem alive while disabled
     return;
   }
   bool gprs = (g_cfg.net_mode == "gprs");
 
   if (!ws_started) {
-    if (g_relayBusy) return;                        // modem is used for the HTTP relay
-    if (gprs && millis() < g_rxWindowUntil) return; // modem waits for the incoming SMS
     if (millis() < wsNextTry) return;
     if (!gprs && WiFi.status() != WL_CONNECTED) {
       wsNextTry = millis() + 3000;
@@ -391,17 +311,11 @@ void ws_tick() {
   }
 
   if (gprs) {
-    if (!gprsUpOnceOk && !gprs_up_once()) { wsNextTry = millis() + 5000; return; }
-    STEP("ws_gprs");
     g_wsLinkClient.tick();
     if (g_wsLinkClient.connected()) {
-      if (g_wsLinkClient.aliveSinceLastPong) {
-        lastPongRecv = millis();
-        g_wsLinkClient.aliveSinceLastPong = false;
-      }
       if (millis() - lastPingSent > 15000) {
         lastPingSent = millis();
-        g_wsLinkClient.sendPing();
+        g_wsLinkClient.sendText("ping");
       }
       if (millis() - lastPongRecv > 60000) {
         g_stats.wsReconnects++;
@@ -453,141 +367,16 @@ static bool sendSmsFromPdu(const String& pduHex, int cmgsLen) {
   }
   g_stats.smsOut = body;   // SMS body that will be written to the modem (kept until the next one)
   bool usingGprs = (g_cfg.net_mode == "gprs") && g_sim.passthroughActive;
-  Serial.printf("[sms] begin send len=%d gprs=%d heap=%u\n", cmgsLen, (int)usingGprs, (unsigned)ESP.getFreeHeap());
-  if (usingGprs) { g_sim.backToAT(); Serial.println("[sms] backToAT done"); }
-  wifi_suspend();                          // T-Call is unstable with WiFi active during SIM800 TX
+  if (usingGprs) g_sim.backToAT();            // pause data link for SMS
   bool ok = g_sim.sendPdu(body.c_str(), cmgsLen);
-  Serial.printf("[sms] sendPdu returned %s\n", ok ? "OK" : "FAIL");
-  if (WIFI_TX_GUARD) {
-    // Keep WiFi off while the modem waits for the FSO reply. Reinitializing the
-    // WiFi stack immediately after the SIM800 TX can trigger a WDT reset.
-    wifiResumeAt = millis() + 120000;
-    Serial.println("[wifi] resume deferred until SMS RX window ends");
-  }
   if (usingGprs) {
     g_sim.closeTcp();                          // data link closed -> WS will reconnect on its own
     ws_force_reconnect();
   }
-  // the answer comes back as an incoming SMS: keep the modem in AT mode for a while
-  g_rxWindowUntil = millis() + 120000;
   Serial.printf("[sms] sendPdu len=%d -> %s\n", cmgsLen, ok ? "OK" : "FAIL");
   g_stats.lastSmsTs = millis();
   return ok;
 }
-
-// ------------------------------- FSO reply relay -------------------------------
-// The FSO answers with a binary SMS (possibly split into several parts). The
-// reassembled packet has to reach the OpenCARWINGS server as a raw binary POST
-// (Content-Type: application/octet-stream) to /ficosa/gdc.
-static String relay_host = "138.16.224.7";
-static int    relay_port = 80;
-static String relay_path = "/ficosa/gdc";
-
-static void relay_parse_url(const String& url) {
-  relay_host = "138.16.224.7";
-  relay_port = 80;
-  relay_path = "/ficosa/gdc";
-  String rest = url;
-  int s = rest.indexOf("://");
-  if (s >= 0) rest = rest.substring(s + 3);
-  int slash = rest.indexOf('/');
-  String hostport = (slash >= 0) ? rest.substring(0, slash) : rest;
-  if (slash >= 0) relay_path = rest.substring(slash);
-  int colon = hostport.indexOf(':');
-  if (colon >= 0) {
-    relay_host = hostport.substring(0, colon);
-    relay_port = hostport.substring(colon + 1).toInt();
-  } else {
-    relay_host = hostport;
-  }
-  if (!relay_host.length() || relay_port <= 0) {
-    relay_host = "138.16.224.7";
-    relay_port = 80;
-  }
-}
-
-static bool relay_via_wifi(const uint8_t* data, size_t len) {
-  HTTPClient http;
-  http.setTimeout(20000);
-  http.setReuse(false);
-  if (!http.begin(g_cfg.relay_url)) {
-    Serial.println("[relay] http.begin FAIL");
-    return false;
-  }
-  http.addHeader("Content-Type", "application/octet-stream");
-  http.addHeader("User-Agent", "NISSAN TCU");
-  int code = http.POST(const_cast<uint8_t*>(data), len);
-  Serial.printf("[relay] wifi POST %s -> %d\n", g_cfg.relay_url.c_str(), code);
-  http.end();
-  return (code >= 200 && code < 300);
-}
-
-static bool relay_via_gprs(const uint8_t* data, size_t len) {
-  bool ok = false;
-  g_relayBusy = true;
-  ws_force_reconnect();               // the modem UART is needed for the request
-  g_sim.closeTcp();
-  wifi_suspend();                    // the modem TX must have the power rail to itself
-  if (g_sim.tcpOpenPassthrough(relay_host, relay_port, g_cfg.apn, g_cfg.apn_user, g_cfg.apn_pass)) {
-    char head[320];
-    int n = snprintf(head, sizeof(head),
-                     "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: NISSAN TCU\r\n"
-                     "Content-Type: application/octet-stream\r\nContent-Length: %u\r\n"
-                     "Connection: close\r\n\r\n",
-                     relay_path.c_str(), relay_host.c_str(), (unsigned)len);
-    if (n > 0) {
-      g_sim.tcpWrite((const uint8_t*)head, n);
-      g_sim.tcpWrite(data, len);
-      String resp;
-      uint8_t buf[256];
-      uint32_t t0 = millis();
-      while (millis() - t0 < 20000) {
-        int r = g_sim.tcpRead(buf, sizeof(buf), 1000);
-        if (r < 0) break;
-        if (r > 0) {
-          for (int i = 0; i < r; i++) resp += (char)buf[i];
-          if (resp.length() > 400) resp.remove(0, 200);
-          if (resp.indexOf("\r\n\r\n") >= 0) break;
-        }
-      }
-      int sp = resp.indexOf(' ');
-      int code = 0;
-      if (resp.startsWith("HTTP/") && sp > 0) {
-        String c = resp.substring(sp + 1);
-        c = c.substring(0, c.indexOf(' '));
-        code = c.toInt();
-      }
-      Serial.printf("[relay] gprs POST %s:%d%s -> %d\n", relay_host.c_str(), relay_port,
-                    relay_path.c_str(), code);
-      ok = (code >= 200 && code < 300);
-    }
-    g_sim.closeTcp();
-  } else {
-    Serial.println("[relay] gprs tcpOpen FAIL");
-  }
-  wifi_resume();
-  g_relayBusy = false;
-  ws_force_reconnect();
-  return ok;
-}
-
-static void onFsoReply(const uint8_t* data, size_t len, const String& sender) {
-  g_stats.rxParts = g_smsRx.parts();
-  g_stats.rxMsgs = g_smsRx.messages();
-  g_stats.rxLast = g_smsRx.lastInfo() + " from " + sender;
-  if (!g_cfg.relay_enabled) {
-    Serial.println("[relay] disabled, answer dropped");
-    return;
-  }
-  bool ok;
-  if (g_cfg.net_mode == "gprs" && WiFi.status() != WL_CONNECTED) ok = relay_via_gprs(data, len);
-  else if (WiFi.status() == WL_CONNECTED)                       ok = relay_via_wifi(data, len);
-  else                                                            ok = relay_via_gprs(data, len);
-  if (ok) g_stats.relayOk++; else g_stats.relayFail++;
-  g_stats.rxLast += (ok ? " -> relayed" : " -> RELAY FAIL");
-  Serial.printf("[relay] answer %u bytes -> %s\n", (unsigned)len, ok ? "OK" : "FAIL");
-}
-
 
 // ------------------------------- SIM health -------------------------------
 static uint32_t simPollAt = 0;
@@ -597,7 +386,6 @@ void sim_tick() {
   if (g_sim.passthroughActive) return;   // transparent mode: UART busy with TLS stream
   if (millis() < simPollAt) return;
   simPollAt = millis() + 15000;
-  STEP("sim");
 
   if (g_stats.simReady) {
     g_stats.simCsq = g_sim.csq();
@@ -615,7 +403,6 @@ void sim_tick() {
     if (ok) {
       g_stats.simReady = true;
       g_sim.setSmsPduMode();
-      g_smsRx.begin();                 // AT+CNMI: store the incoming SMS for polling
       Serial.println("[sim] ready");
     } else {
       g_stats.simInitAttempts++;
@@ -762,7 +549,6 @@ void cli_tick() {
           Serial.printf("[cfg] check_url=%s gprs_host=%s\n", g_cfg.check_url.c_str(), g_cfg.gprs_host.c_str());
           Serial.printf("[cfg] apn='%s' apn_user='%s' apn_pass='%s'\n", g_cfg.apn.c_str(), g_cfg.apn_user.c_str(), g_cfg.apn_pass.c_str());
           Serial.printf("[cfg] ws_url=%s autoreconnect=%d\n", g_cfg.ws_url.c_str(), g_cfg.ws_autoreconnect);
-          Serial.printf("[cfg] relay_url=%s enabled=%d net_eff=%s\n", g_cfg.relay_url.c_str(), (int)g_cfg.relay_enabled, net_eff_name().c_str());
         }
         else if (c.length() > 2 && c[0] == 's' && c[1] == ' ') {
           String kv = c.substring(2);
@@ -801,25 +587,6 @@ void cli_tick() {
         else if (c == "m") {
           diagPduTrials();
         }
-        else if (c == "x") {
-          if (g_sim.passthroughActive) {
-            Serial.println("[sms] modem is in data mode -> AT+CMGR not possible");
-          } else {
-            for (uint8_t slot = 0; slot < 4; slot++) {
-              char cc[16];
-              snprintf(cc, sizeof(cc), "AT+CMGR=%u", (unsigned)slot);
-              String r = g_sim.cmdLong(cc, 1500);
-              Serial.printf("[sms] slot %u (%u bytes): %s\n", (unsigned)slot, (unsigned)r.length(), r.c_str());
-            }
-          }
-        }
-        else if (c[0] == 'p' && c.length() > 3) {
-          String hex = c.substring(2);
-          hex.trim();
-          int octets = hex.length() / 2;
-          bool ok = sendSmsFromPdu(hex, octets - 1);
-          Serial.printf("[cli] sendPdu %d octets -> %s\n", octets, ok ? "OK" : "FAIL");
-        }
         else if (c == "u") {
           Serial.printf("[st] armed=%d started=%d connected=%d state=%s\n",
             (int)ws_armed, (int)ws_started, (int)g_stats.wsConnected, g_stats.wsState.c_str());
@@ -827,11 +594,6 @@ void cli_tick() {
           Serial.printf("[st] gprs=%d smsOk=%u smsFail=%u last='%s' wifi=%d heap=%u\n",
             (int)gprsUpOnceOk, (unsigned)g_stats.smsOk, (unsigned)g_stats.smsFail, g_stats.smsLast.c_str(),
             (int)WiFi.status(), (unsigned)ESP.getFreeHeap());
-          Serial.printf("[st] rxParts=%u rxMsgs=%u relayOk=%u relayFail=%u rx='%s'\n",
-                        (unsigned)g_stats.rxParts, (unsigned)g_stats.rxMsgs, (unsigned)g_stats.relayOk,
-                        (unsigned)g_stats.relayFail, g_stats.rxLast.c_str());
-          Serial.printf("[st] loop_stack_free=%u min_free_heap=%u\n",
-                        (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)ESP.getMinFreeHeap());
         }
         else if (c == "w") {
           uint8_t mode = WiFi.getMode();
@@ -892,12 +654,6 @@ void setup() {
     Serial.println("[url] ws_url parse fail -> WS disabled");
   }
 
-  // relay endpoint for the FSO answers
-  relay_parse_url(g_cfg.relay_url);
-  Serial.printf("[url] relay %s:%d%s (enabled=%d)\n", relay_host.c_str(), relay_port,
-                relay_path.c_str(), (int)g_cfg.relay_enabled);
-  g_smsRx.setCallback(onFsoReply);
-
   // The SIM800 draws ~2 A in short bursts (boot, network TX). Together with the
   // WiFi radio this can collapse the 3.3 V rail of the T-Call and corrupt the
   // ESP32 memory (heap assert / stack canary / WDT reset), so the modem is
@@ -916,24 +672,14 @@ void setup() {
     ws_armed = true;
     wsNextTry = millis() + 1500;
   }
-  esp_err_t wdtInit = esp_task_wdt_init(30, true);
-  esp_err_t wdtAdd = esp_task_wdt_add(NULL);
-  Serial.printf("[wdt] loop 30s init=%d add=%d\n", (int)wdtInit, (int)wdtAdd);
   Serial.printf("[main] ready; key=%d bytes; ws_armed=%d\n", (int)g_keyLen, ws_armed);
 }
 
 void loop() {
-  esp_task_wdt_reset();
-  static uint32_t lastHb = 0;
-  if (millis() - lastHb >= 1000) {
-    lastHb = millis();
-    Serial.printf("[hb] %s t=%lu heap=%u\n", g_step, (unsigned long)millis(), (unsigned)ESP.getFreeHeap());
-  }
-  STEP("cli");   cli_tick();
-  STEP("web");   web_handle();
-  STEP("wifi");  wifi_tick();
-  STEP("sim");   sim_tick();
-  STEP("smsrx"); g_smsRx.tick();
-  STEP("ws");    ws_tick();
+  cli_tick();
+  web_handle();
+  wifi_tick();
+  sim_tick();
+  ws_tick();
   delay(5);
 }

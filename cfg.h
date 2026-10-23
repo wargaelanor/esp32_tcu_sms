@@ -10,7 +10,7 @@ struct Config {
   String ap_ssid = "ESP32-TCU-SMS";
   String ap_pass = "tcu12345";
   bool   ap_enable = true;
-  // Internet transport: "wifi" or "gprs"
+  // Internet: "wifi" or "gprs"
   String net_mode = "wifi";
   String check_url = "http://138.16.224.7/";
   String gprs_host = "138.16.224.7";
@@ -23,9 +23,6 @@ struct Config {
   String jar_enc_key;      // hex, may contain spaces, 16/24/32 bytes
   String ws_url = "ws://138.16.224.7/ws/smsgateway/";
   bool   ws_autoreconnect = true;
-  // FSO answer relay: HTTP POST of the raw binary reply to the OpenCARWINGS server
-  String relay_url = "http://138.16.224.7/ficosa/gdc";
-  bool   relay_enabled = true;
   // Stats helpers
   bool   loaded = false;
   bool   dirty  = false;

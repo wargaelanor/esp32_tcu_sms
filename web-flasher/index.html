@@ -65,8 +65,8 @@
     <section class="panel">
       <h2 id="selected-board">ESP32-C3 + SIM800</h2>
       <p>Подключите плату качественным USB-кабелем, закройте Serial Monitor и нажмите кнопку ниже.</p>
-      <esp-web-install-button id="installer" manifest="manifests/c3.json"></esp-web-install-button>
-      <div class="note"><strong>Важно:</strong> установка полного образа перезаписывает сохранённую конфигурацию. После завершения отключите и снова подключите питание, затем настройте устройство через точку <code>ESP32-TCU-SMS</code>.</div>
+      <esp-web-install-button id="installer" manifest="manifests/c3.json?v=211"></esp-web-install-button>
+      <div class="note"><strong>Важно:</strong> прошивка очищает содержимое flash. После завершения отключите и снова подключите питание. Точка <code>ESP32-TCU-SMS</code> должна появиться в течение 10–30 секунд.</div>
     </section>
 
     <section class="steps" aria-label="Инструкция">
@@ -96,16 +96,14 @@
     <section class="info tip" aria-labelledby="tip-title">
       <h2 id="tip-title">Совет</h2>
       <p>Для теста подойдёт любая SIM-карта с пакетом интернета — обычно достаточно «SMS-пакета» от вашего оператора. Устройство поддерживает авто-переподключение при обрыве сети и пережидает перезагрузку сервера. Если после настройки нет соединения — проверьте APN и наличие интернета на SIM (пункт меню «Проверить интернет»).</p>
-      <p>На TTGO T-Call Wi-Fi и точка <code>ESP32-TCU-SMS</code> временно отключаются примерно на 120 секунд при отправке команды и ожидании ответной SMS. Это защищает плату от перезагрузки во время передачи SIM800.</p>
-      <p>TTGO T-Call использует Wi-Fi для связи с сервером; GPRS-транспорт доступен только для ESP32-C3 с отдельно запитанным SIM800.</p>
     </section>
   </main>
   <script>
     const installer = document.querySelector('#installer');
     const title = document.querySelector('#selected-board');
     const labels = {
-      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json'],
-      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json']
+      c3: ['ESP32-C3 + SIM800', 'manifests/c3.json?v=211'],
+      tcall: ['TTGO T-Call v1.3 / v1.4', 'manifests/tcall.json?v=211']
     };
     document.querySelectorAll('input[name="board"]').forEach((input) => {
       input.addEventListener('change', () => {

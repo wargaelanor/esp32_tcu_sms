@@ -258,12 +258,10 @@ int WsLinkClient::processFrames() {
 }
 
 void WsLinkClient::closeLink(bool notify) {
-  bool wasOpen = _open;
   _open = false;
-  if (_link) _link->close();
+  _link->close();
   _rxlen = _rxpos = 0;
-  // only report a real state change, otherwise the "disarmed" state would spam the log
-  if (notify && wasOpen && onDisconnect) onDisconnect();
+  if (notify && onDisconnect) onDisconnect();
 }
 
 void WsLinkClient::tick() {

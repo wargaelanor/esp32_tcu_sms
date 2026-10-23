@@ -23,11 +23,6 @@ struct Stats {
   bool     internetOk = false;
   String   internetMethod = "-";
   String   internetInfo = "-";
-  uint32_t rxParts = 0;      // SMS parts received from the FSO
-  uint32_t rxMsgs = 0;       // reassembled messages
-  uint32_t relayOk = 0;      // answers forwarded to the server
-  uint32_t relayFail = 0;
-  String   rxLast = "";      // last received message description
 };
 
 extern Stats g_stats;
